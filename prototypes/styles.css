@@ -270,11 +270,13 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 8px 8px 12px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
 }
 
 .transfer-pin {
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   color: var(--accent);
@@ -285,10 +287,8 @@ body {
   height: 14px;
 }
 
-.transfer-title {
+.transfer-spacer {
   flex: 1;
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .transfer-head .icon-btn {
@@ -327,77 +327,43 @@ body {
   flex: 1;
   overflow-y: auto;
   display: grid;
-  gap: 4px;
+  gap: 6px;
   padding: 6px;
 }
 
-.transfer-item {
+.transfer-card {
+  border-color: var(--border);
+}
+
+.transfer-card.active {
+  border-color: var(--accent);
+}
+
+.transfer-card .image-preview img {
+  max-width: 100%;
+  max-height: 150px;
+}
+
+.transfer-expand {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--bg);
+  justify-content: center;
+  margin-top: 2px;
 }
 
-.transfer-thumb {
-  width: 48px;
-  height: 36px;
-  flex: none;
-  object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-}
-
-.transfer-item:hover {
-  background: var(--surface-2);
-}
-
-.transfer-kind {
-  display: grid;
-  place-items: center;
-  padding-top: 1px;
-  color: var(--text-2);
-}
-
-.transfer-kind svg {
-  width: 14px;
-  height: 14px;
-}
-
-.transfer-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.transfer-text p {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.transfer-text span {
-  color: var(--text-2);
-  font-size: 11px;
-}
-
-.transfer-remove {
-  width: 20px;
-  height: 20px;
+.transfer-expand button {
   border: 0;
-  border-radius: 4px;
   background: transparent;
   color: var(--text-2);
+  font-size: 12px;
   cursor: pointer;
 }
 
-.transfer-remove:hover {
-  background: var(--hover);
-  color: #f87171;
+.transfer-expand button:hover {
+  color: var(--accent);
+}
+
+.transfer-source {
+  color: var(--text-2);
 }
 
 .transfer-empty {
@@ -407,35 +373,6 @@ body {
   font-size: 12px;
 }
 
-.transfer-foot {
-  display: flex;
-  gap: 6px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-}
-
-.transfer-btn {
-  flex: 1;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.transfer-btn.primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
-}
-
-.transfer-btn:hover:not(:disabled) {
-  filter: brightness(1.05);
-}
-
-.transfer-btn:disabled,
 .icon-btn:disabled {
   opacity: 0.45;
   cursor: default;
