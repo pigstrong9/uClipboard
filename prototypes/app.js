@@ -38,7 +38,9 @@ document.getElementById('moreBtn').innerHTML = ICONS.more;
 document.getElementById('hideBtn').innerHTML = ICONS.close;
 document.querySelector('[data-quick-action="copy"]').innerHTML = ICONS.copy;
 document.querySelector('[data-quick-action="paste"]').innerHTML = ICONS.paste;
-document.querySelector('[data-quick-action="pin"]').innerHTML = ICONS.pin;
+const transferBtn = document.querySelector('[data-quick-action="pin"]');
+transferBtn.innerHTML = ICONS.pin;
+transferBtn.title = '多选 / 临时中转';
 document.getElementById('settingsTextBtn').innerHTML = ICONS.gear;
 document.getElementById('clearBtn').innerHTML = ICONS.trash;
 
@@ -48,6 +50,9 @@ const state = {
   query: '',
   selected: 0,
   expanded: new Set(),
+  selectMode: false,
+  selectedIds: new Set(),
+  transferQuery: '',
 };
 
 const TABS = [
@@ -111,6 +116,7 @@ function setTab(key) {
 function renderAll() {
   renderTabs();
   renderList();
+  renderTransfer();
 }
 
 document.getElementById('tabs').addEventListener('click', (event) => {
@@ -157,6 +163,7 @@ document.getElementById('list').addEventListener('click', (event) => {
   }
   const item = event.target.closest('.item');
   if (!item) return;
+  if (state.selectMode) return toggleSelect(item.dataset.id);
   if (event.target.closest('[data-expand]')) {
     const id = event.target.closest('[data-expand]').dataset.expand;
     state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
@@ -167,7 +174,9 @@ document.getElementById('list').addEventListener('click', (event) => {
 
 document.getElementById('list').addEventListener('dblclick', (event) => {
   const item = event.target.closest('.item');
-  if (item) pasteItem(item.dataset.id);
+  if (!item) return;
+  if (state.selectMode) return toggleSelect(item.dataset.id);
+  pasteItem(item.dataset.id);
 });
 
 function openPreview(item) {
@@ -241,11 +250,16 @@ document.addEventListener('click', (event) => {
 document.querySelector('.quick-rail').addEventListener('click', (event) => {
   const btn = event.target.closest('[data-quick-action]');
   if (!btn) return;
+  const action = btn.dataset.quickAction;
+  if (action === 'pin') return toggleTransferMode();
+  if (state.selectMode) {
+    if (action === 'copy') return copySelected();
+    if (action === 'paste') return pasteSelected();
+  }
   const item = currentItem();
   if (!item) return;
-  if (btn.dataset.quickAction === 'copy') copyItem(item.id);
-  if (btn.dataset.quickAction === 'paste') pasteItem(item.id);
-  if (btn.dataset.quickAction === 'pin') togglePin(item.id);
+  if (action === 'copy') copyItem(item.id);
+  if (action === 'paste') pasteItem(item.id);
 });
 
 function formatRelativeTime(ts) {
@@ -284,18 +298,20 @@ function renderItem(item, index) {
       .join('')}</ul>`;
   }
 
-  return `<article class="item ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
+  const picked = state.selectedIds.has(item.id);
+
+  return `<article class="item ${index === state.selected ? 'selected' : ''} ${picked ? 'picked' : ''}" data-id="${item.id}" data-index="${index}">
     <div class="item-main">${body}</div>
     <div class="item-meta">
       <span class="item-time">${formatRelativeTime(item.updated_at)}</span>
       <span class="item-size">${meta}</span>
       ${index < 9 ? `<span class="item-index">${index + 1}</span>` : ''}
     </div>
-    <div class="row-actions">
+    ${state.selectMode ? '' : `<div class="row-actions">
       <button class="icon-btn" data-action="paste" title="粘贴">${ICONS.paste}</button>
       <button class="icon-btn" data-action="favorite" title="收藏">${ICONS.star}</button>
       <button class="icon-btn" data-action="delete" title="删除">${ICONS.trash}</button>
-    </div>
+    </div>`}
     ${item.pinned ? `<span class="pin-badge">${ICONS.pin}</span>` : ''}
   </article>`;
 }
@@ -374,6 +390,7 @@ function togglePin(id) {
 
 function removeItem(id) {
   state.items = state.items.filter((item) => item.id !== id);
+  state.selectedIds.delete(id);
   state.selected = 0;
   renderAll();
   toast('已删除');
@@ -390,6 +407,168 @@ function select(index) {
   el?.scrollIntoView({ block: 'nearest' });
 }
 
+function selectedItems() {
+  return state.items.filter((item) => state.selectedIds.has(item.id));
+}
+
+function toggleSelect(id) {
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+  else state.selectedIds.add(id);
+  renderAll();
+}
+
+function exitTransferMode() {
+  state.selectMode = false;
+  state.selectedIds.clear();
+  state.transferQuery = '';
+  renderAll();
+}
+
+function toggleTransferMode() {
+  state.selectMode = !state.selectMode;
+  state.transferQuery = '';
+  if (!state.selectMode) state.selectedIds.clear();
+  renderAll();
+}
+
+function copySelected() {
+  const items = selectedItems();
+  if (!items.length) return;
+  items.forEach((item) => touchItem(item.id));
+  renderAll();
+  toast(`已复制 ${items.length} 条`);
+}
+
+function pasteSelected() {
+  const items = selectedItems();
+  if (!items.length) return;
+  items.forEach((item) => touchItem(item.id));
+  state.selectMode = false;
+  state.selectedIds.clear();
+  state.transferQuery = '';
+  renderAll();
+  toast(`已粘贴 ${items.length} 条（原型）`);
+  hideWindow();
+}
+
+function favoriteSelected() {
+  const items = selectedItems();
+  if (!items.length) return;
+  const allFavorite = items.every((item) => item.favorite);
+  items.forEach((item) => {
+    item.favorite = !allFavorite;
+  });
+  renderAll();
+  toast(allFavorite ? '已取消收藏' : '已收藏');
+}
+
+function renderTransferItem(item) {
+  const preview =
+    item.kind === 'text'
+      ? item.content.replace(/\s+/g, ' ').slice(0, 80)
+      : item.kind === 'image'
+        ? `${item.extra.width} × ${item.extra.height} 图片`
+        : item.preview;
+  const meta =
+    item.kind === 'text'
+      ? `${item.size} 字符`
+      : item.kind === 'image'
+        ? '图片'
+        : `${item.extra.count} 个文件`;
+  const icon = item.kind === 'text' ? ICONS.text : item.kind === 'image' ? ICONS.image : ICONS.files;
+
+  return `<div class="transfer-item">
+    <span class="transfer-kind">${icon}</span>
+    <div class="transfer-text">
+      <p>${escapeHtml(preview)}</p>
+      <span>${formatRelativeTime(item.updated_at)} · ${meta}</span>
+    </div>
+    <button class="transfer-remove" data-transfer-remove="${item.id}" title="移出">×</button>
+  </div>`;
+}
+
+function renderTransfer() {
+  const panel = document.getElementById('transferPanel');
+  if (!state.selectMode) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    transferBtn.dataset.count = '0';
+    transferBtn.classList.remove('active');
+    return;
+  }
+
+  const total = state.selectedIds.size;
+  const keyword = state.transferQuery.trim().toLowerCase();
+  const items = selectedItems().filter((item) => {
+    if (!keyword) return true;
+    const text = item.kind === 'files' ? item.content.join('\n') : item.content;
+    return text.toLowerCase().includes(keyword);
+  });
+
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="transfer-head">
+      <span class="transfer-pin">${ICONS.pin}</span>
+      <span class="transfer-title">临时中转${total ? ` · ${total}` : ''}</span>
+      <button class="icon-btn" data-transfer-action="copy" title="复制全部" ${total ? '' : 'disabled'}>${ICONS.copy}</button>
+      <button class="icon-btn" data-transfer-action="favorite" title="收藏全部" ${total ? '' : 'disabled'}>${ICONS.star}</button>
+      <button class="icon-btn" data-transfer-action="search" title="搜索">${ICONS.search}</button>
+      <button class="icon-btn" data-transfer-action="close" title="关闭">${ICONS.close}</button>
+    </div>
+    <div class="transfer-search">
+      <input id="transferSearch" type="text" placeholder="在中转内容中搜索…" value="${escapeHtml(state.transferQuery)}" />
+    </div>
+    <div class="transfer-body">
+      ${
+        items.length
+          ? items.map(renderTransferItem).join('')
+          : `<div class="transfer-empty">${total ? '没有匹配的内容' : '在左侧单击条目加入临时中转'}</div>`
+      }
+    </div>
+    <div class="transfer-foot">
+      <button class="transfer-btn" data-transfer-action="clear" ${total ? '' : 'disabled'}>清空</button>
+      <button class="transfer-btn" data-transfer-action="copy" ${total ? '' : 'disabled'}>复制全部</button>
+      <button class="transfer-btn primary" data-transfer-action="paste" ${total ? '' : 'disabled'}>粘贴全部</button>
+    </div>`;
+
+  transferBtn.dataset.count = String(total);
+  transferBtn.classList.add('active');
+}
+
+const transferPanelEl = document.getElementById('transferPanel');
+transferPanelEl.addEventListener('click', (event) => {
+  const remove = event.target.closest('[data-transfer-remove]');
+  if (remove) {
+    state.selectedIds.delete(remove.dataset.transferRemove);
+    renderAll();
+    return;
+  }
+  const action = event.target.closest('[data-transfer-action]');
+  if (!action) return;
+  const name = action.dataset.transferAction;
+  if (name === 'copy') return copySelected();
+  if (name === 'paste') return pasteSelected();
+  if (name === 'favorite') return favoriteSelected();
+  if (name === 'close') return exitTransferMode();
+  if (name === 'clear') {
+    state.selectedIds.clear();
+    renderAll();
+    return;
+  }
+  if (name === 'search') document.getElementById('transferSearch')?.focus();
+});
+
+transferPanelEl.addEventListener('input', (event) => {
+  if (event.target.id !== 'transferSearch') return;
+  state.transferQuery = event.target.value;
+  renderTransfer();
+  const input = document.getElementById('transferSearch');
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+});
+
 document.addEventListener('keydown', (event) => {
   const target = event.target;
   const inSearch = target instanceof HTMLElement && target.id === 'searchInput';
@@ -399,6 +578,7 @@ document.addEventListener('keydown', (event) => {
     if (!document.getElementById('settings').hidden) return closeSettings();
     if (!document.getElementById('modal').hidden) return closeModal();
     if (!document.getElementById('contextMenu').hidden) return closeContextMenu();
+    if (state.selectMode) return exitTransferMode();
     if (state.query) {
       state.query = '';
       document.getElementById('searchInput').value = '';
@@ -434,6 +614,12 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Enter') {
+    if (state.selectMode) {
+      if (state.selectedIds.size) return pasteSelected();
+      const current = currentItem();
+      if (current) toggleSelect(current.id);
+      return;
+    }
     const item = currentItem();
     if (item) pasteItem(item.id);
     return;
@@ -441,6 +627,10 @@ document.addEventListener('keydown', (event) => {
   if (event.key === ' ') {
     event.preventDefault();
     const item = currentItem();
+    if (state.selectMode) {
+      if (item) toggleSelect(item.id);
+      return;
+    }
     if (item && typeof openPreview === 'function') openPreview(item);
     return;
   }
@@ -449,8 +639,15 @@ document.addEventListener('keydown', (event) => {
     if (item) removeItem(item.id);
     return;
   }
+  if (meta && event.key.toLowerCase() === 'a' && state.selectMode) {
+    event.preventDefault();
+    items.forEach((item) => state.selectedIds.add(item.id));
+    renderAll();
+    return;
+  }
   if (meta && event.key.toLowerCase() === 'c') {
     event.preventDefault();
+    if (state.selectMode) return copySelected();
     const item = currentItem();
     if (item) copyItem(item.id);
     return;
@@ -469,7 +666,9 @@ document.addEventListener('keydown', (event) => {
   }
   if (!meta && !event.altKey && /^[1-9]$/.test(event.key)) {
     const item = items[Number(event.key) - 1];
-    if (item) pasteItem(item.id);
+    if (!item) return;
+    if (state.selectMode) return toggleSelect(item.id);
+    pasteItem(item.id);
     return;
   }
   if (!meta && !event.altKey && (event.key === '/' || /^[a-zA-Z]$/.test(event.key))) {
@@ -582,5 +781,9 @@ if (themeParam === 'light' || themeParam === 'dark') setTheme(themeParam);
 const tabParam = params.get('tab');
 if (TABS.some((tab) => tab.key === tabParam)) state.tab = tabParam;
 if (params.get('settings') === '1') openSettings();
+if (params.get('transfer') === '1') {
+  state.selectMode = true;
+  state.items.slice(0, 2).forEach((item) => state.selectedIds.add(item.id));
+}
 
 renderAll();
