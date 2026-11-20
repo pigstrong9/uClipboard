@@ -156,6 +156,74 @@ document.getElementById('list').addEventListener('dblclick', (event) => {
   if (item) pasteItem(item.dataset.id);
 });
 
+function openPreview(item) {
+  const modal = document.getElementById('modal');
+  if (item.kind === 'image') {
+    modal.innerHTML = `<figure class="preview-image">
+      <img src="${item.extra.thumb}" alt="剪贴板图片" />
+      <figcaption>${item.extra.width} × ${item.extra.height}</figcaption>
+    </figure>`;
+  } else if (item.kind === 'files') {
+    modal.innerHTML = `<div class="preview-text"><h3>${item.extra.count} 个文件</h3><pre>${escapeHtml(item.content.join('\n'))}</pre></div>`;
+  } else {
+    modal.innerHTML = `<div class="preview-text"><pre>${escapeHtml(item.content)}</pre></div>`;
+  }
+  modal.hidden = false;
+}
+
+function closeModal() {
+  document.getElementById('modal').hidden = true;
+}
+
+document.getElementById('modal').addEventListener('click', (event) => {
+  if (event.target.id === 'modal') closeModal();
+});
+
+function openContextMenu(event, item) {
+  event.preventDefault();
+  const menu = document.getElementById('contextMenu');
+  menu.innerHTML = `
+    <button data-action="paste">粘贴</button>
+    <button data-action="copy">复制</button>
+    <button data-action="favorite">${item.favorite ? '取消收藏' : '收藏'}</button>
+    <button data-action="pin">${item.pinned ? '取消置顶' : '置顶'}</button>
+    <hr />
+    <button data-action="delete" class="danger">删除</button>`;
+  menu.dataset.id = item.id;
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - 160)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - 200)}px`;
+  menu.hidden = false;
+}
+
+function closeContextMenu() {
+  document.getElementById('contextMenu').hidden = true;
+}
+
+document.getElementById('list').addEventListener('contextmenu', (event) => {
+  const el = event.target.closest('.item');
+  if (!el) return;
+  const item = findItem(el.dataset.id);
+  select(Number(el.dataset.index));
+  openContextMenu(event, item);
+});
+
+document.getElementById('contextMenu').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action]');
+  if (!button) return;
+  const id = document.getElementById('contextMenu').dataset.id;
+  const action = button.dataset.action;
+  closeContextMenu();
+  if (action === 'paste') pasteItem(id);
+  if (action === 'copy') copyItem(id);
+  if (action === 'favorite') toggleFavorite(id);
+  if (action === 'pin') togglePin(id);
+  if (action === 'delete') removeItem(id);
+});
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('#contextMenu')) closeContextMenu();
+});
+
 function formatRelativeTime(ts) {
   const diff = Date.now() - ts;
   const minute = 60 * 1000;

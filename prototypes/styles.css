@@ -383,3 +383,119 @@ body {
 .item:hover .row-actions {
   display: flex;
 }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 80;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.preview-image {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.preview-image img {
+  max-width: min(760px, 86vw);
+  max-height: 70vh;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.preview-image figcaption {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.preview-text {
+  width: min(720px, 86vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 20px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.preview-text h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.preview-text pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 85;
+  min-width: 140px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: grid;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.context-menu button:hover {
+  background: var(--hover);
+}
+
+.context-menu button.danger {
+  color: #f87171;
+}
+
+.context-menu hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.is-hidden {
+  display: none;
+}
+
+.restore-hint {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #9aa0a6;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.restore-hint[hidden] {
+  display: none;
+}
