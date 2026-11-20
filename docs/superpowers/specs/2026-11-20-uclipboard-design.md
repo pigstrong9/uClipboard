@@ -58,7 +58,7 @@ uClipboard 是一个开源、跨平台、只做剪贴板管理的桌面应用：
 | 后端 | Rust |
 | 剪贴板读取 | clipboard-rs（轮询） |
 | 存储 | rusqlite（bundled SQLite）+ appData 图片文件 |
-| 粘贴模拟 | enigo |
+| 粘贴模拟 | Windows SendInput；macOS/Linux enigo |
 | 官方插件 | global-shortcut、autostart、single-instance、updater、log |
 | 托盘 | Tauri 内置 tray API |
 | 测试 | cargo test、Vitest + Testing Library |
@@ -280,7 +280,7 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 
 | 平台 | 采集 | 粘贴 | 前台应用 | 备注 |
 |---|---|---|---|---|
-| Windows | clipboard-rs 轮询 | enigo 发送 Ctrl+V | GetForegroundWindow + 进程名 | 读取剪贴板隐私格式 |
+| Windows | clipboard-rs 轮询 | Win32 SendInput 发送 Ctrl+V | GetForegroundWindow + 进程名 | 读取剪贴板隐私格式；图片写回 CF_DIB + PNG |
 | macOS | clipboard-rs 轮询 | enigo 发送 Cmd+V，需辅助功能授权 | NSWorkspace 前台应用 | 设置页检测授权并提供跳转 |
 | Linux X11 | clipboard-rs 轮询 | enigo 模拟粘贴 | 尽力获取 | — |
 | Linux Wayland | 依赖系统能力 | 失败则降级仅复制 | 通常不可用，记录为空 | 文档说明限制 |
