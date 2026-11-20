@@ -3,12 +3,21 @@ const min = 60 * 1000;
 const day = 24 * 60 * min;
 
 function svgImage(width, height, label) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <rect width="100%" height="100%" fill="#111418"/>
-    <rect x="6" y="6" width="90%" height="20" rx="3" fill="#1d2530"/>
-    <text x="14" y="21" font-family="Consolas, monospace" font-size="12" fill="#7dd3fc">${label}</text>
-    <rect x="6" y="34" width="70%" height="10" rx="2" fill="#243244"/>
-    <rect x="6" y="50" width="55%" height="10" rx="2" fill="#243244"/>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300" viewBox="0 0 480 300">
+    <rect width="480" height="300" rx="10" fill="#0d1117"/>
+    <rect x="1" y="1" width="478" height="28" rx="9" fill="#161b22"/>
+    <circle cx="18" cy="15" r="4" fill="#ff5f57"/>
+    <circle cx="32" cy="15" r="4" fill="#febc2e"/>
+    <circle cx="46" cy="15" r="4" fill="#28c840"/>
+    <text x="64" y="19" font-family="Consolas, monospace" font-size="11" fill="#8b949e">${label}</text>
+    <rect x="16" y="46" width="240" height="10" rx="3" fill="#30363d"/>
+    <rect x="16" y="66" width="330" height="10" rx="3" fill="#30363d"/>
+    <rect x="16" y="86" width="160" height="10" rx="3" fill="#7dd3fc"/>
+    <rect x="16" y="106" width="380" height="10" rx="3" fill="#30363d"/>
+    <rect x="16" y="126" width="280" height="10" rx="3" fill="#f0b429"/>
+    <rect x="16" y="146" width="350" height="10" rx="3" fill="#30363d"/>
+    <rect x="16" y="166" width="200" height="10" rx="3" fill="#7ee787"/>
+    <rect x="16" y="186" width="320" height="10" rx="3" fill="#30363d"/>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
