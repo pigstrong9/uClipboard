@@ -20,7 +20,6 @@ const MIN_TEXT_CHARS: usize = 3;
 
 pub struct PreparedItem {
     pub item: NewItem,
-    pub thumb: Option<String>,
 }
 
 pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
@@ -49,7 +48,6 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
                     size: files.len() as i64,
                     source_app: None,
                 },
-                thumb: None,
             })
         }
         ClipKind::Image => {
@@ -71,7 +69,6 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
                     size: png.len() as i64,
                     source_app: None,
                 },
-                thumb: saved.thumb_data_url,
             })
         }
         ClipKind::Text => {
@@ -100,7 +97,6 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
                     size: text.chars().count() as i64,
                     source_app: None,
                 },
-                thumb: None,
             })
         }
     }
@@ -150,4 +146,64 @@ pub fn spawn_monitor(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_capture(text: &str, html: Option<&str>) -> RawCapture {
+        RawCapture {
+            kind: ClipKind::Text,
+            text: Some(text.to_string()),
+            html: html.map(str::to_string),
+            image_png: None,
+            files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn skips_short_text() {
+        let prepared = prepare(text_capture("ab", None), Path::new("."));
+        assert!(prepared.is_none());
+    }
+
+    #[test]
+    fn prepares_text_preview_and_html() {
+        let prepared = prepare(
+            text_capture("hello   clipboard world", Some("<b>hello</b>")),
+            Path::new("."),
+        )
+        .expect("text should be prepared");
+        assert_eq!(prepared.item.kind, ClipKind::Text);
+        assert_eq!(prepared.item.preview, "hello clipboard world");
+        assert!(prepared
+            .item
+            .extra
+            .as_deref()
+            .unwrap_or_default()
+            .contains("<b>hello</b>"));
+    }
+
+    #[test]
+    fn prepares_files_sorted() {
+        let prepared = prepare(
+            RawCapture {
+                kind: ClipKind::Files,
+                text: None,
+                html: None,
+                image_png: None,
+                files: vec![
+                    "C:/tmp/b.txt".to_string(),
+                    "C:/tmp/a.txt".to_string(),
+                ],
+            },
+            Path::new("."),
+        )
+        .expect("files should be prepared");
+        assert_eq!(prepared.item.kind, ClipKind::Files);
+        assert_eq!(prepared.item.size, 2);
+        assert_eq!(prepared.item.content, "[\"C:/tmp/a.txt\",\"C:/tmp/b.txt\"]");
+        assert_eq!(prepared.item.preview, "a.txt 等 2 个文件");
+    }
 }
