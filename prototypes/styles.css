@@ -200,3 +200,53 @@ body {
   font-size: 13px;
   z-index: 90;
 }
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.tab-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tab-count {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.empty-icon svg {
+  width: 42px;
+  height: 42px;
+  opacity: 0.35;
+}
