@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "uClipboard",
+  "version": "0.1.0",
+  "identifier": "com.uclipboard.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "uClipboard",
+        "width": 880,
+        "height": 660,
+        "minWidth": 720,
+        "minHeight": 520,
+        "decorations": false,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyRDdERTE4RTA4MDRDQTUKUldTbFRJRGdHTjdYNGtTclRjZkZQeG1wbGNlWmpoNFFBNVAxK3p5ejhvU1ZBTC9wbm5XZmF6QzEK",
+      "endpoints": [
+        "https://github.com/pigstrong9/uClipboard/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": false,
+    "shortDescription": "跨平台开源剪贴板管理器",
+    "longDescription": "uClipboard 自动记录文本、图片和文件剪贴板历史，支持搜索、收藏、置顶、全局快捷键和临时中转。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
