@@ -790,6 +790,18 @@ function renderItem(item, index) {
 }
 ```
 
+同一文件追加展开/收起监听（Task 4 会替换成包含选中、行内操作的完整监听）：
+
+```js
+document.getElementById('list').addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-expand]');
+  if (!btn) return;
+  const id = btn.dataset.expand;
+  state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+  renderList();
+});
+```
+
 - [ ] **Step 2: 写条目样式**
 
 ```css
@@ -1072,9 +1084,9 @@ document.addEventListener('keydown', (event) => {
 });
 ```
 
-- [ ] **Step 3: 写点击、双击与行内操作**
+- [ ] **Step 3: 替换为完整的列表点击监听**
 
-分类点击、搜索聚焦和 `setTab` 已在 Task 2 实现，这里只补列表事件。
+分类点击、搜索聚焦和 `setTab` 已在 Task 2 实现。这里把 Task 3 的展开监听替换为同时处理行内操作、展开与选中的完整版本。
 
 ```js
 document.getElementById('list').addEventListener('click', (event) => {

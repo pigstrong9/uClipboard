@@ -132,10 +132,63 @@ document.getElementById('searchInput').addEventListener('input', (event) => {
   renderList();
 });
 
-// 最小渲染：Task 3 会替换为完整的条目卡片
+document.getElementById('list').addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-expand]');
+  if (!btn) return;
+  const id = btn.dataset.expand;
+  state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+  renderList();
+});
+
+function formatRelativeTime(ts) {
+  const diff = Date.now() - ts;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return '刚用';
+  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`;
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
+  return `${Math.floor(diff / day)} 天前`;
+}
+
 function renderItem(item, index) {
+  const meta =
+    item.kind === 'text'
+      ? `${item.size} 字符`
+      : item.kind === 'image'
+        ? `${item.extra.width} × ${item.extra.height}`
+        : `${item.extra.count} 个文件`;
+
+  let body = '';
+  if (item.kind === 'text') {
+    const expanded = state.expanded.has(item.id);
+    body = `<div class="text-preview ${expanded ? 'expanded' : ''}">${escapeHtml(item.content)}</div>
+      ${item.content.length > 180 ? `<button class="expand-btn" data-expand="${item.id}">${expanded ? '收起' : '展开'}</button>` : ''}`;
+  } else if (item.kind === 'image') {
+    body = `<div class="image-preview"><img src="${item.extra.thumb}" alt="剪贴板图片" /></div>`;
+  } else {
+    const files = item.content.slice(0, 4);
+    body = `<ul class="file-list">${files
+      .map((file) => {
+        const name = file.split(/[\\/]/).pop();
+        return `<li><span class="file-icon">${ICONS.file}</span><span class="file-name">${escapeHtml(name)}</span></li>`;
+      })
+      .join('')}</ul>`;
+  }
+
   return `<article class="item ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
-    <div class="item-main">${escapeHtml(item.preview)}</div>
+    <div class="item-main">${body}</div>
+    <div class="item-meta">
+      <span class="item-time">${formatRelativeTime(item.updated_at)}</span>
+      <span class="item-size">${meta}</span>
+      ${index < 9 ? `<span class="item-index">${index + 1}</span>` : ''}
+    </div>
+    <div class="row-actions">
+      <button class="icon-btn" data-action="paste" title="粘贴">${ICONS.paste}</button>
+      <button class="icon-btn" data-action="favorite" title="收藏">${ICONS.star}</button>
+      <button class="icon-btn" data-action="delete" title="删除">${ICONS.trash}</button>
+    </div>
+    ${item.pinned ? `<span class="pin-badge">${ICONS.pin}</span>` : ''}
   </article>`;
 }
 
