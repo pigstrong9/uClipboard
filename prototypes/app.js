@@ -372,6 +372,7 @@ document.addEventListener('keydown', (event) => {
   const meta = event.metaKey || event.ctrlKey;
 
   if (event.key === 'Escape') {
+    if (!document.getElementById('settings').hidden) return closeSettings();
     if (!document.getElementById('modal').hidden) return closeModal();
     if (!document.getElementById('contextMenu').hidden) return closeContextMenu();
     if (state.query) {
@@ -384,6 +385,7 @@ document.addEventListener('keydown', (event) => {
     return hideWindow();
   }
 
+  if (!document.getElementById('settings').hidden) return;
   if (inSearch) return;
 
   const items = visibleItems();
@@ -454,6 +456,100 @@ document.addEventListener('keydown', (event) => {
     state.query = search.value;
     renderList();
   }
+});
+
+const SETTINGS_SECTIONS = {
+  basic: [
+    ['全局快捷键', 'Alt + V'],
+    ['开机自启', '已开启'],
+    ['失焦自动隐藏', '已开启'],
+    ['粘贴为纯文本', '已关闭'],
+    ['主题', '跟随系统'],
+    ['语言', '简体中文'],
+  ],
+  history: [
+    ['历史上限', '500 条'],
+    ['保留天数', '30 天'],
+    ['记录文本', '开启'],
+    ['记录图片', '开启'],
+    ['记录文件', '开启'],
+    ['最短文本长度', '3 字符'],
+  ],
+  privacy: [
+    ['忽略应用', 'KeePass、1Password、Bitwarden'],
+    ['隐私剪贴板格式', '已启用识别'],
+    ['数据存储', '仅本机 SQLite 与本地图片文件'],
+  ],
+  about: [
+    ['版本', '0.1.0 原型'],
+    ['许可证', 'Apache-2.0'],
+    ['检查更新', '通过 GitHub Releases'],
+  ],
+};
+
+function renderSettings(section = 'basic') {
+  document.getElementById('settingsBody').innerHTML = `
+    <h2>${section === 'basic' ? '基本设置' : section === 'history' ? '历史记录' : section === 'privacy' ? '隐私' : '关于'}</h2>
+    <ul class="setting-list">
+      ${SETTINGS_SECTIONS[section]
+        .map(([label, value]) => `<li><span>${label}</span><strong>${value}</strong></li>`)
+        .join('')}
+    </ul>
+    ${section === 'basic' ? `<div class="theme-row">
+      <span>界面主题</span>
+      <select id="themeSelect">
+        <option value="system">跟随系统</option>
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select>
+    </div>` : ''}`;
+}
+
+function openSettings() {
+  document.getElementById('settings').hidden = false;
+  renderSettings('basic');
+}
+
+function closeSettings() {
+  document.getElementById('settings').hidden = true;
+}
+
+document.getElementById('settingsBtn').addEventListener('click', openSettings);
+document.getElementById('settingsTextBtn').addEventListener('click', openSettings);
+document.getElementById('settings').addEventListener('click', (event) => {
+  const nav = event.target.closest('[data-section]');
+  if (nav) {
+    document.querySelectorAll('.settings-nav button').forEach((btn) => btn.classList.remove('active'));
+    nav.classList.add('active');
+    renderSettings(nav.dataset.section);
+  }
+});
+
+document.getElementById('settingsBody').addEventListener('change', (event) => {
+  if (event.target.id === 'themeSelect') setTheme(event.target.value);
+});
+
+function setTheme(theme) {
+  const resolved =
+    theme === 'system'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : theme;
+  document.documentElement.dataset.theme = resolved;
+}
+
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  if (!window.confirm('确定清空全部剪贴板历史？')) return;
+  state.items = [];
+  state.selected = 0;
+  renderAll();
+  toast('历史已清空');
 });
 
 renderAll();
