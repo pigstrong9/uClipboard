@@ -133,11 +133,27 @@ document.getElementById('searchInput').addEventListener('input', (event) => {
 });
 
 document.getElementById('list').addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-expand]');
-  if (!btn) return;
-  const id = btn.dataset.expand;
-  state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
-  renderList();
+  const actionBtn = event.target.closest('[data-action]');
+  if (actionBtn) {
+    const id = actionBtn.closest('.item').dataset.id;
+    const action = actionBtn.dataset.action;
+    if (action === 'paste') return pasteItem(id);
+    if (action === 'favorite') return toggleFavorite(id);
+    if (action === 'delete') return removeItem(id);
+  }
+  const item = event.target.closest('.item');
+  if (!item) return;
+  if (event.target.closest('[data-expand]')) {
+    const id = event.target.closest('[data-expand]').dataset.expand;
+    state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+    return renderList();
+  }
+  select(Number(item.dataset.index));
+});
+
+document.getElementById('list').addEventListener('dblclick', (event) => {
+  const item = event.target.closest('.item');
+  if (item) pasteItem(item.dataset.id);
 });
 
 function formatRelativeTime(ts) {
@@ -199,5 +215,177 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
 }
+
+function findItem(id) {
+  return state.items.find((item) => item.id === id);
+}
+
+function touchItem(id) {
+  const item = findItem(id);
+  if (!item) return;
+  item.updated_at = Date.now();
+  item.copy_count += 1;
+}
+
+let toastTimer = 0;
+
+function toast(message) {
+  const el = document.getElementById('toast');
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.hidden = true), 1600);
+}
+
+function hideWindow() {
+  document.getElementById('app').classList.add('is-hidden');
+  document.getElementById('restoreHint').hidden = false;
+}
+
+document.getElementById('restoreHint').addEventListener('click', () => {
+  document.getElementById('app').classList.remove('is-hidden');
+  document.getElementById('restoreHint').hidden = true;
+  state.query = '';
+  document.getElementById('searchInput').value = '';
+  state.selected = 0;
+  renderAll();
+});
+
+document.getElementById('hideBtn').addEventListener('click', hideWindow);
+
+function pasteItem(id) {
+  touchItem(id);
+  renderAll();
+  toast('已粘贴（原型）');
+  hideWindow();
+}
+
+function copyItem(id) {
+  touchItem(id);
+  renderAll();
+  toast('已复制');
+}
+
+function toggleFavorite(id) {
+  const item = findItem(id);
+  if (!item) return;
+  item.favorite = !item.favorite;
+  renderAll();
+}
+
+function togglePin(id) {
+  const item = findItem(id);
+  if (!item) return;
+  item.pinned = !item.pinned;
+  renderAll();
+}
+
+function removeItem(id) {
+  state.items = state.items.filter((item) => item.id !== id);
+  state.selected = 0;
+  renderAll();
+  toast('已删除');
+}
+
+function currentItem() {
+  return visibleItems()[state.selected] ?? null;
+}
+
+function select(index) {
+  state.selected = index;
+  renderList();
+  const el = document.querySelector('.item.selected');
+  el?.scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  const inSearch = target instanceof HTMLElement && target.id === 'searchInput';
+  const meta = event.metaKey || event.ctrlKey;
+
+  if (event.key === 'Escape') {
+    if (!document.getElementById('modal').hidden) return closeModal();
+    if (!document.getElementById('contextMenu').hidden) return closeContextMenu();
+    if (state.query) {
+      state.query = '';
+      document.getElementById('searchInput').value = '';
+      renderList();
+      return;
+    }
+    if (inSearch) return target.blur();
+    return hideWindow();
+  }
+
+  if (inSearch) return;
+
+  const items = visibleItems();
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    return select(Math.min(state.selected + 1, items.length - 1));
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    return select(Math.max(state.selected - 1, 0));
+  }
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    const delta = event.shiftKey ? -1 : 1;
+    return select(Math.min(Math.max(state.selected + delta, 0), items.length - 1));
+  }
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    const index = TABS.findIndex((tab) => tab.key === state.tab);
+    const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length;
+    setTab(TABS[next].key);
+    return;
+  }
+  if (event.key === 'Enter') {
+    const item = currentItem();
+    if (item) pasteItem(item.id);
+    return;
+  }
+  if (event.key === ' ') {
+    event.preventDefault();
+    const item = currentItem();
+    if (item && typeof openPreview === 'function') openPreview(item);
+    return;
+  }
+  if (event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) {
+    const item = currentItem();
+    if (item) removeItem(item.id);
+    return;
+  }
+  if (meta && event.key.toLowerCase() === 'c') {
+    event.preventDefault();
+    const item = currentItem();
+    if (item) copyItem(item.id);
+    return;
+  }
+  if (meta && event.key.toLowerCase() === 'd') {
+    event.preventDefault();
+    const item = currentItem();
+    if (item) toggleFavorite(item.id);
+    return;
+  }
+  if (meta && event.key.toLowerCase() === 'p') {
+    event.preventDefault();
+    const item = currentItem();
+    if (item) togglePin(item.id);
+    return;
+  }
+  if (!meta && !event.altKey && /^[1-9]$/.test(event.key)) {
+    const item = items[Number(event.key) - 1];
+    if (item) pasteItem(item.id);
+    return;
+  }
+  if (!meta && !event.altKey && (event.key === '/' || /^[a-zA-Z]$/.test(event.key))) {
+    event.preventDefault();
+    const search = document.getElementById('searchInput');
+    search.focus();
+    if (event.key !== '/') search.value += event.key;
+    state.query = search.value;
+    renderList();
+  }
+});
 
 renderAll();
