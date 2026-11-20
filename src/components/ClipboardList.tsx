@@ -10,6 +10,7 @@ interface Props {
   loading: boolean;
   onSelect: (id: string) => void;
   onCopy: (id: string) => void;
+  onPaste: (id: string) => void;
   onFavorite: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -20,6 +21,7 @@ export function ClipboardList({
   loading,
   onSelect,
   onCopy,
+  onPaste,
   onFavorite,
   onDelete,
 }: Props) {
@@ -80,7 +82,7 @@ export function ClipboardList({
             className={`item ${selectedId === item.id ? 'selected' : ''}`}
             data-id={item.id}
             onClick={() => onSelect(item.id)}
-            onDoubleClick={() => onCopy(item.id)}
+            onDoubleClick={() => onPaste(item.id)}
           >
             <div className="item-main">
               {item.kind === 'text' && (

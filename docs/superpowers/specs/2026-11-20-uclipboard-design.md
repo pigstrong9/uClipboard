@@ -1,7 +1,7 @@
 # uClipboard 设计文档
 
 - 日期：2026-11-20
-- 状态：设计已确认；M0 静态原型与 M1 核心版已完成（2026-11-20）
+- 状态：设计已确认；M0/M1 完成，M2 的自动粘贴、Alt+V、托盘基础菜单已完成（2026-11-20）
 - 许可证：Apache-2.0
 - 设计参考：同类剪贴板管理器的通用交互模式；不使用任何第三方产品的代码、Logo、图标等资产
 
@@ -173,7 +173,7 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 1. 前端调用 `paste_item(id)`
 2. Rust 将条目原始格式写回剪贴板（文本、HTML、图片、文件列表）；开启纯文本时只写文本
 3. 设置自身写入抑制标记
-4. 隐藏窗口，等待 120ms 焦点返回
+4. 隐藏窗口，等待 200ms 焦点返回
 5. enigo 发送 `Ctrl+V` / `Cmd+V`
 6. 失败则降级为仅复制，并 toast「已复制，请手动粘贴」
 
@@ -331,7 +331,7 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 | M3 | 主题/i18n/自动更新/三平台打包与 CI | CI 三平台构建成功 |
 | M4 | README、LICENSE、v0.1.0 首发 | 发布页可下载 |
 
-截至 2026-11-20：M0、M1 已完成，M2 待开始。M1 的 Enter/双击为复制到剪贴板，自动粘贴在 M2 接入；M1 样式直接复用 M0 手写 CSS，Tailwind/Radix 在组件扩展时再评估。
+截至 2026-11-20：M0、M1 已完成；M2 的自动粘贴（双击/Enter）、Alt+V、托盘基础菜单已完成，忽略应用、开机自启、临时中转独立窗口待做。M1 样式直接复用 M0 手写 CSS，Tailwind/Radix 在组件扩展时再评估。
 
 ## 14. 风险与对策
 

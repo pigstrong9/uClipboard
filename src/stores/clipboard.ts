@@ -20,6 +20,7 @@ interface ClipboardState {
   togglePin: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   copy: (id: string) => Promise<void>;
+  paste: (id: string) => Promise<void>;
   clear: () => Promise<void>;
   clearError: () => void;
 }
@@ -86,6 +87,11 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
 
   copy: async (id) => {
     await ipc.copyItem(id);
+    await get().load();
+  },
+
+  paste: async (id) => {
+    await ipc.pasteItem(id);
     await get().load();
   },
 

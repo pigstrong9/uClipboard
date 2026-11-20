@@ -31,6 +31,7 @@ export default function App() {
   const togglePin = useClipboard((state) => state.togglePin);
   const remove = useClipboard((state) => state.remove);
   const copy = useClipboard((state) => state.copy);
+  const paste = useClipboard((state) => state.paste);
   const clear = useClipboard((state) => state.clear);
   const clearError = useClipboard((state) => state.clearError);
   const toast = useUi((state) => state.toast);
@@ -182,7 +183,7 @@ export default function App() {
       }
       if (event.key === 'Enter') {
         event.preventDefault();
-        if (current) void run(() => copy(current.id), '已复制');
+        if (current) void run(() => paste(current.id));
         return;
       }
       if (meta && event.key.toLowerCase() === 'c') {
@@ -241,6 +242,7 @@ export default function App() {
     previewItem,
     tab,
     copy,
+    paste,
     toggleFavorite,
     togglePin,
     remove,
@@ -268,6 +270,7 @@ export default function App() {
           loading={loading}
           onSelect={select}
           onCopy={(id) => void run(() => copy(id), '已复制')}
+          onPaste={(id) => void run(() => paste(id))}
           onFavorite={(id) => void run(() => toggleFavorite(id))}
           onDelete={(id) => void run(() => remove(id), '已删除')}
         />

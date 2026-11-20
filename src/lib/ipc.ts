@@ -27,6 +27,10 @@ export function copyItem(id: string) {
   return invoke<ClipItem>('copy_item', { id });
 }
 
+export function pasteItem(id: string) {
+  return invoke<ClipItem>('paste_item', { id });
+}
+
 export function stats() {
   return invoke<number>('stats');
 }
