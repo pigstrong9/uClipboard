@@ -31,7 +31,6 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1Z"/></svg>',
 };
 
-document.querySelector('.brand-logo').innerHTML = ICONS.logo;
 document.querySelector('.search-icon').innerHTML = ICONS.search;
 document.getElementById('themeBtn').innerHTML = ICONS.sun;
 document.getElementById('settingsBtn').innerHTML = ICONS.gear;
@@ -52,11 +51,11 @@ const state = {
 };
 
 const TABS = [
-  { key: 'all', label: '全部', icon: 'grid' },
+  { key: 'all', label: '全部', icon: 'layers' },
   { key: 'text', label: '文本', icon: 'text' },
   { key: 'image', label: '图像', icon: 'image' },
-  { key: 'files', label: '文件', icon: 'folder' },
-  { key: 'favorite', label: '收藏', icon: 'bookmark' },
+  { key: 'files', label: '文件', icon: 'files' },
+  { key: 'favorite', label: '收藏', icon: 'star' },
 ];
 
 function sortedItems() {
@@ -98,7 +97,7 @@ function renderTabs() {
       <button class="tab ${state.tab === tab.key ? 'active' : ''}" data-tab="${tab.key}" role="tab">
         <span class="tab-icon">${ICONS[tab.icon]}</span>
         <span>${tab.label}</span>
-        <span class="tab-count">${counts[tab.key]}</span>
+        ${tab.key === 'favorite' ? `<span class="tab-count">${counts.favorite}</span>` : ''}
       </button>`
   ).join('');
 }
@@ -125,7 +124,7 @@ function renderList() {
   state.selected = Math.min(state.selected, Math.max(items.length - 1, 0));
   if (!items.length) {
     list.innerHTML = `<div class="empty">
-      <div class="empty-icon">${ICONS.logo}</div>
+      <div class="empty-icon">${ICONS.clipboard}</div>
       <p>${state.query ? '没有匹配的记录' : '还没有剪贴板记录'}</p>
       <span>${state.query ? '换个关键词试试' : '复制任意内容后会自动出现在这里'}</span>
     </div>`;
@@ -285,16 +284,9 @@ function renderItem(item, index) {
       .join('')}</ul>`;
   }
 
-  const kindMeta = {
-    text: { label: '文本', icon: ICONS.text },
-    image: { label: '图像', icon: ICONS.image },
-    files: { label: '文件', icon: ICONS.folder },
-  }[item.kind];
-
-  return `<article class="item kind-${item.kind} ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
+  return `<article class="item ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
     <div class="item-main">${body}</div>
     <div class="item-meta">
-      <span class="kind-chip kind-${item.kind}">${kindMeta.icon}<em>${kindMeta.label}</em></span>
       <span class="item-time">${formatRelativeTime(item.updated_at)}</span>
       <span class="item-size">${meta}</span>
       ${index < 9 ? `<span class="item-index">${index + 1}</span>` : ''}

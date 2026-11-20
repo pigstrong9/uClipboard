@@ -10,9 +10,7 @@
     <main class="app" id="app">
       <header class="titlebar" data-tauri-drag-region>
         <div class="brand">
-          <span class="brand-logo" aria-hidden="true"></span>
-          <span class="brand-name">uClipboard</span>
-          <span class="brand-tag">剪贴板</span>
+          <span class="brand-name">剪贴板</span>
         </div>
         <label class="search" for="searchInput">
           <span class="search-icon" aria-hidden="true"></span>
@@ -26,7 +24,21 @@
         </div>
       </header>
       <nav class="tabs" id="tabs" aria-label="分类"></nav>
-      <section class="list" id="list" tabindex="0" aria-label="剪贴板历史"></section>
+      <div class="workspace">
+        <section class="list" id="list" tabindex="0" aria-label="剪贴板历史"></section>
+        <aside class="side-rail" aria-label="快捷操作">
+          <div class="quick-rail">
+            <button class="quick-btn" data-quick-action="copy" title="复制"></button>
+            <button class="quick-btn" data-quick-action="paste" title="粘贴"></button>
+            <button class="quick-btn" data-quick-action="pin" title="置顶"></button>
+          </div>
+          <div class="utility-rail">
+            <button class="icon-btn rail-btn" id="settingsTextBtn" title="设置"></button>
+            <button class="icon-btn rail-btn" id="clearBtn" title="清空历史"></button>
+          </div>
+        </aside>
+        <div class="status-float" id="statusText">监控中 · 共 0 条</div>
+      </div>
       <div class="settings" id="settings" hidden>
         <aside class="settings-nav">
           <button class="active" data-section="basic">基本</button>
@@ -35,16 +47,6 @@
           <button data-section="about">关于</button>
         </aside>
         <section class="settings-body" id="settingsBody"></section>
-      </div>
-      <div class="status-float" id="statusText">监控中 · 共 0 条</div>
-      <div class="quick-rail" aria-label="快捷操作">
-        <button class="quick-btn" data-quick-action="copy" title="复制"></button>
-        <button class="quick-btn" data-quick-action="paste" title="粘贴"></button>
-        <button class="quick-btn" data-quick-action="pin" title="置顶"></button>
-      </div>
-      <div class="utility-rail">
-        <button class="icon-btn rail-btn" id="settingsTextBtn" title="设置"></button>
-        <button class="icon-btn rail-btn" id="clearBtn" title="清空历史"></button>
       </div>
     </main>
     <div class="toast" id="toast" role="status" hidden></div>
