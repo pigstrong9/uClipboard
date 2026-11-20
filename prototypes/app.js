@@ -50,8 +50,9 @@ const state = {
   query: '',
   selected: 0,
   expanded: new Set(),
-  selectMode: false,
   selectedIds: new Set(),
+  transferOpen: false,
+  transferIds: new Set(),
   transferQuery: '',
 };
 
@@ -163,19 +164,21 @@ document.getElementById('list').addEventListener('click', (event) => {
   }
   const item = event.target.closest('.item');
   if (!item) return;
-  if (state.selectMode) return toggleSelect(item.dataset.id);
+  const index = Number(item.dataset.index);
+  const id = item.dataset.id;
   if (event.target.closest('[data-expand]')) {
-    const id = event.target.closest('[data-expand]').dataset.expand;
-    state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+    const expandId = event.target.closest('[data-expand]').dataset.expand;
+    state.expanded.has(expandId) ? state.expanded.delete(expandId) : state.expanded.add(expandId);
     return renderList();
   }
-  select(Number(item.dataset.index));
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+  else state.selectedIds.add(id);
+  select(index);
 });
 
 document.getElementById('list').addEventListener('dblclick', (event) => {
   const item = event.target.closest('.item');
   if (!item) return;
-  if (state.selectMode) return toggleSelect(item.dataset.id);
   pasteItem(item.dataset.id);
 });
 
@@ -251,11 +254,7 @@ document.querySelector('.quick-rail').addEventListener('click', (event) => {
   const btn = event.target.closest('[data-quick-action]');
   if (!btn) return;
   const action = btn.dataset.quickAction;
-  if (action === 'pin') return toggleTransferMode();
-  if (state.selectMode) {
-    if (action === 'copy') return copySelected();
-    if (action === 'paste') return pasteSelected();
-  }
+  if (action === 'pin') return openTransferPanel();
   const item = currentItem();
   if (!item) return;
   if (action === 'copy') copyItem(item.id);
@@ -307,11 +306,11 @@ function renderItem(item, index) {
       <span class="item-size">${meta}</span>
       ${index < 9 ? `<span class="item-index">${index + 1}</span>` : ''}
     </div>
-    ${state.selectMode ? '' : `<div class="row-actions">
+    <div class="row-actions">
       <button class="icon-btn" data-action="paste" title="粘贴">${ICONS.paste}</button>
       <button class="icon-btn" data-action="favorite" title="收藏">${ICONS.star}</button>
       <button class="icon-btn" data-action="delete" title="删除">${ICONS.trash}</button>
-    </div>`}
+    </div>
     ${item.pinned ? `<span class="pin-badge">${ICONS.pin}</span>` : ''}
   </article>`;
 }
@@ -391,6 +390,7 @@ function togglePin(id) {
 function removeItem(id) {
   state.items = state.items.filter((item) => item.id !== id);
   state.selectedIds.delete(id);
+  state.transferIds.delete(id);
   state.selected = 0;
   renderAll();
   toast('已删除');
@@ -402,7 +402,7 @@ function currentItem() {
 
 function select(index) {
   state.selected = index;
-  renderList();
+  renderAll();
   const el = document.querySelector('.item.selected');
   el?.scrollIntoView({ block: 'nearest' });
 }
@@ -411,48 +411,57 @@ function selectedItems() {
   return state.items.filter((item) => state.selectedIds.has(item.id));
 }
 
-function toggleSelect(id) {
-  if (state.selectedIds.has(id)) state.selectedIds.delete(id);
-  else state.selectedIds.add(id);
+function transferItems() {
+  return state.items.filter((item) => state.transferIds.has(item.id));
+}
+
+function openTransferPanel() {
+  const picked = selectedItems();
+  if (!picked.length) {
+    const current = currentItem();
+    if (current) state.selectedIds.add(current.id);
+  }
+  const toAdd = selectedItems();
+  if (!toAdd.length) {
+    toast('请先选择内容');
+    return;
+  }
+  toAdd.forEach((item) => state.transferIds.add(item.id));
+  state.transferOpen = true;
+  state.transferQuery = '';
   renderAll();
 }
 
-function exitTransferMode() {
-  state.selectMode = false;
+function closeTransferPanel() {
+  state.transferOpen = false;
+  state.transferIds.clear();
   state.selectedIds.clear();
   state.transferQuery = '';
   renderAll();
 }
 
-function toggleTransferMode() {
-  state.selectMode = !state.selectMode;
-  state.transferQuery = '';
-  if (!state.selectMode) state.selectedIds.clear();
-  renderAll();
-}
-
-function copySelected() {
-  const items = selectedItems();
+function copyTransfer() {
+  const items = transferItems();
   if (!items.length) return;
   items.forEach((item) => touchItem(item.id));
   renderAll();
   toast(`已复制 ${items.length} 条`);
 }
 
-function pasteSelected() {
-  const items = selectedItems();
+function pasteTransfer() {
+  const items = transferItems();
   if (!items.length) return;
   items.forEach((item) => touchItem(item.id));
-  state.selectMode = false;
-  state.selectedIds.clear();
+  state.transferOpen = false;
+  state.transferIds.clear();
   state.transferQuery = '';
   renderAll();
   toast(`已粘贴 ${items.length} 条（原型）`);
   hideWindow();
 }
 
-function favoriteSelected() {
-  const items = selectedItems();
+function favoriteTransfer() {
+  const items = transferItems();
   if (!items.length) return;
   const allFavorite = items.every((item) => item.favorite);
   items.forEach((item) => {
@@ -489,17 +498,17 @@ function renderTransferItem(item) {
 
 function renderTransfer() {
   const panel = document.getElementById('transferPanel');
-  if (!state.selectMode) {
+  if (!state.transferOpen) {
     panel.hidden = true;
     panel.innerHTML = '';
-    transferBtn.dataset.count = '0';
+    transferBtn.dataset.count = String(state.selectedIds.size);
     transferBtn.classList.remove('active');
     return;
   }
 
-  const total = state.selectedIds.size;
+  const total = state.transferIds.size;
   const keyword = state.transferQuery.trim().toLowerCase();
-  const items = selectedItems().filter((item) => {
+  const items = transferItems().filter((item) => {
     if (!keyword) return true;
     const text = item.kind === 'files' ? item.content.join('\n') : item.content;
     return text.toLowerCase().includes(keyword);
@@ -522,7 +531,7 @@ function renderTransfer() {
       ${
         items.length
           ? items.map(renderTransferItem).join('')
-          : `<div class="transfer-empty">${total ? '没有匹配的内容' : '在左侧单击条目加入临时中转'}</div>`
+          : `<div class="transfer-empty">${total ? '没有匹配的内容' : '先在列表中选择条目，再点击中转按钮'}</div>`
       }
     </div>
     <div class="transfer-foot">
@@ -539,19 +548,19 @@ const transferPanelEl = document.getElementById('transferPanel');
 transferPanelEl.addEventListener('click', (event) => {
   const remove = event.target.closest('[data-transfer-remove]');
   if (remove) {
-    state.selectedIds.delete(remove.dataset.transferRemove);
+    state.transferIds.delete(remove.dataset.transferRemove);
     renderAll();
     return;
   }
   const action = event.target.closest('[data-transfer-action]');
   if (!action) return;
   const name = action.dataset.transferAction;
-  if (name === 'copy') return copySelected();
-  if (name === 'paste') return pasteSelected();
-  if (name === 'favorite') return favoriteSelected();
-  if (name === 'close') return exitTransferMode();
+  if (name === 'copy') return copyTransfer();
+  if (name === 'paste') return pasteTransfer();
+  if (name === 'favorite') return favoriteTransfer();
+  if (name === 'close') return closeTransferPanel();
   if (name === 'clear') {
-    state.selectedIds.clear();
+    state.transferIds.clear();
     renderAll();
     return;
   }
@@ -578,7 +587,12 @@ document.addEventListener('keydown', (event) => {
     if (!document.getElementById('settings').hidden) return closeSettings();
     if (!document.getElementById('modal').hidden) return closeModal();
     if (!document.getElementById('contextMenu').hidden) return closeContextMenu();
-    if (state.selectMode) return exitTransferMode();
+    if (state.transferOpen) return closeTransferPanel();
+    if (state.selectedIds.size) {
+      state.selectedIds.clear();
+      renderAll();
+      return;
+    }
     if (state.query) {
       state.query = '';
       document.getElementById('searchInput').value = '';
@@ -614,12 +628,6 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Enter') {
-    if (state.selectMode) {
-      if (state.selectedIds.size) return pasteSelected();
-      const current = currentItem();
-      if (current) toggleSelect(current.id);
-      return;
-    }
     const item = currentItem();
     if (item) pasteItem(item.id);
     return;
@@ -627,10 +635,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === ' ') {
     event.preventDefault();
     const item = currentItem();
-    if (state.selectMode) {
-      if (item) toggleSelect(item.id);
-      return;
-    }
     if (item && typeof openPreview === 'function') openPreview(item);
     return;
   }
@@ -639,15 +643,8 @@ document.addEventListener('keydown', (event) => {
     if (item) removeItem(item.id);
     return;
   }
-  if (meta && event.key.toLowerCase() === 'a' && state.selectMode) {
-    event.preventDefault();
-    items.forEach((item) => state.selectedIds.add(item.id));
-    renderAll();
-    return;
-  }
   if (meta && event.key.toLowerCase() === 'c') {
     event.preventDefault();
-    if (state.selectMode) return copySelected();
     const item = currentItem();
     if (item) copyItem(item.id);
     return;
@@ -666,9 +663,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (!meta && !event.altKey && /^[1-9]$/.test(event.key)) {
     const item = items[Number(event.key) - 1];
-    if (!item) return;
-    if (state.selectMode) return toggleSelect(item.id);
-    pasteItem(item.id);
+    if (item) pasteItem(item.id);
     return;
   }
   if (!meta && !event.altKey && (event.key === '/' || /^[a-zA-Z]$/.test(event.key))) {
@@ -782,8 +777,11 @@ const tabParam = params.get('tab');
 if (TABS.some((tab) => tab.key === tabParam)) state.tab = tabParam;
 if (params.get('settings') === '1') openSettings();
 if (params.get('transfer') === '1') {
-  state.selectMode = true;
-  state.items.slice(0, 2).forEach((item) => state.selectedIds.add(item.id));
+  state.items.slice(0, 2).forEach((item) => {
+    state.selectedIds.add(item.id);
+    state.transferIds.add(item.id);
+  });
+  state.transferOpen = true;
 }
 
 renderAll();
