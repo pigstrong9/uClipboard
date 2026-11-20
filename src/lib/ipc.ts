@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { ClipItem, TabKey } from './types';
+import type { ClipItem, Settings, TabKey, UpdateInfo } from './types';
 
 export function listItems(tab: TabKey, query: string) {
   return invoke<ClipItem[]>('list_items', { tab, query });
@@ -67,10 +67,62 @@ export function closeTransfer() {
   return invoke<void>('close_transfer');
 }
 
+export function getSettings() {
+  return invoke<Settings>('get_settings');
+}
+
+export function updateSettings(settings: Settings) {
+  return invoke<Settings>('update_settings', { settings });
+}
+
+export function toggleMonitoring() {
+  return invoke<boolean>('toggle_monitoring');
+}
+
+export function hideMain() {
+  return invoke<void>('hide_main');
+}
+
+export function checkUpdate() {
+  return invoke<UpdateInfo | null>('check_update');
+}
+
+export function installUpdate() {
+  return invoke<void>('install_update');
+}
+
 export function onClipboardChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('clipboard-changed', () => callback());
 }
 
 export function onTransferChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('transfer-changed', () => callback());
+}
+
+export function onSettingsChanged(callback: () => void): Promise<UnlistenFn> {
+  return listen('settings-changed', () => callback());
+}
+
+export function onMainShown(callback: () => void): Promise<UnlistenFn> {
+  return listen('main-shown', () => callback());
+}
+
+export function onOpenSettings(callback: () => void): Promise<UnlistenFn> {
+  return listen('open-settings', () => callback());
+}
+
+export function onRequestClear(callback: () => void): Promise<UnlistenFn> {
+  return listen('request-clear', () => callback());
+}
+
+export function onToastMessage(callback: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>('toast-message', (event) => callback(event.payload));
+}
+
+export function onToastKey(callback: (key: string) => void): Promise<UnlistenFn> {
+  return listen<string>('toast-key', (event) => callback(event.payload));
+}
+
+export function onUpdateAvailable(callback: (version: string) => void): Promise<UnlistenFn> {
+  return listen<string>('update-available', (event) => callback(event.payload));
 }

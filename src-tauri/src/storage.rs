@@ -84,7 +84,6 @@ impl Store {
                 now,
             ],
         )?;
-        self.prune(500)?;
         self.get(&id)
     }
 
@@ -149,7 +148,8 @@ impl Store {
     }
 
     pub fn count(&self) -> rusqlite::Result<i64> {
-        self.conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
+        self.conn
+            .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
     }
 
     pub fn favorite_count(&self) -> rusqlite::Result<i64> {
@@ -159,28 +159,59 @@ impl Store {
             })
     }
 
-    pub fn prune(&self, limit: usize) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "DELETE FROM items WHERE id IN (
-               SELECT id FROM items
-               WHERE favorite = 0 AND pinned = 0
-               ORDER BY updated_at DESC
-               LIMIT -1 OFFSET ?1
-             )",
-            params![limit as i64],
+    pub fn image_paths(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content FROM items WHERE kind = 'image'")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    pub fn prune(&self, limit: usize, retention_days: i64) -> rusqlite::Result<Vec<String>> {
+        let limit = limit as i64;
+        let days = retention_days.max(0);
+        let cutoff = now_ms() - days * 24 * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, content FROM items
+             WHERE deleted_at IS NULL
+               AND favorite = 0 AND pinned = 0
+               AND (
+                 (?1 > 0 AND id IN (
+                   SELECT id FROM items
+                   WHERE deleted_at IS NULL AND favorite = 0 AND pinned = 0
+                   ORDER BY updated_at DESC
+                   LIMIT -1 OFFSET ?1
+                 ))
+                 OR (?2 > 0 AND updated_at < ?3)
+               )",
         )?;
-        Ok(())
+        let doomed = stmt
+            .query_map(params![limit, days, cutoff], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+
+        let mut images = Vec::new();
+        for (id, kind, content) in doomed {
+            if kind == "image" {
+                images.push(content);
+            }
+            self.conn
+                .execute("DELETE FROM items WHERE id = ?1", params![id])?;
+        }
+        Ok(images)
     }
 }
 
 fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
     let kind_value: String = row.get("kind")?;
     let kind = ClipKind::parse(&kind_value).ok_or_else(|| {
-        rusqlite::Error::InvalidColumnType(
-            1,
-            "kind".to_string(),
-            rusqlite::types::Type::Text,
-        )
+        rusqlite::Error::InvalidColumnType(1, "kind".to_string(), rusqlite::types::Type::Text)
     })?;
     Ok(ClipItem {
         id: row.get("id")?,
@@ -320,10 +351,35 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         let b = store.insert(new_text("b", "h2")).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.insert(new_text("c", "h3")).unwrap();
+        let c = store.insert(new_text("c", "h3")).unwrap();
         store.toggle_pin(&a.id).unwrap();
         store.toggle_favorite(&b.id).unwrap();
-        store.prune(0).unwrap();
+        store.prune(1, 0).unwrap();
+        assert_eq!(store.count().unwrap(), 3);
+        assert_eq!(store.get(&c.id).unwrap().id, c.id);
+    }
+
+    #[test]
+    fn prune_zero_limit_disables_count_pruning() {
+        let store = Store::in_memory().unwrap();
+        store.insert(new_text("a", "h1")).unwrap();
+        store.insert(new_text("b", "h2")).unwrap();
+        store.prune(0, 0).unwrap();
         assert_eq!(store.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn prune_returns_removed_image_paths() {
+        let store = Store::in_memory().unwrap();
+        store
+            .insert(new_kind(ClipKind::Image, "images/old.png", "h1"))
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE items SET updated_at = 0", [])
+            .unwrap();
+        let removed = store.prune(0, 1).unwrap();
+        assert_eq!(removed, vec!["images/old.png".to_string()]);
+        assert_eq!(store.count().unwrap(), 0);
     }
 }

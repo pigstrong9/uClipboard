@@ -1,12 +1,13 @@
 import { Icon, type IconName } from '../lib/icons';
+import { useI18n } from '../lib/useI18n';
 import type { TabKey } from '../lib/types';
 
-const TABS: { key: TabKey; label: string; icon: IconName }[] = [
-  { key: 'all', label: '全部', icon: 'layers' },
-  { key: 'text', label: '文本', icon: 'text' },
-  { key: 'image', label: '图像', icon: 'image' },
-  { key: 'files', label: '文件', icon: 'files' },
-  { key: 'favorite', label: '收藏', icon: 'star' },
+const TABS: { key: TabKey; labelKey: string; icon: IconName }[] = [
+  { key: 'all', labelKey: 'all', icon: 'layers' },
+  { key: 'text', labelKey: 'text', icon: 'text' },
+  { key: 'image', labelKey: 'imageTab', icon: 'image' },
+  { key: 'files', labelKey: 'filesTab', icon: 'files' },
+  { key: 'favorite', labelKey: 'favorites', icon: 'star' },
 ];
 
 interface Props {
@@ -16,8 +17,9 @@ interface Props {
 }
 
 export function Tabs({ tab, favoriteCount, onChange }: Props) {
+  const { t } = useI18n();
   return (
-    <nav className="tabs" aria-label="分类">
+    <nav className="tabs" aria-label={t('categories')}>
       {TABS.map((item) => (
         <button
           key={item.key}
@@ -30,7 +32,7 @@ export function Tabs({ tab, favoriteCount, onChange }: Props) {
           <span className="tab-icon">
             <Icon name={item.icon} />
           </span>
-          <span>{item.label}</span>
+          <span>{t(item.labelKey)}</span>
           {item.key === 'favorite' && <span className="tab-count">{favoriteCount}</span>}
         </button>
       ))}

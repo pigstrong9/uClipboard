@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 
 import { Icon } from '../lib/icons';
+import { useI18n } from '../lib/useI18n';
 
 interface Props {
   search: string;
@@ -19,10 +20,11 @@ export function Titlebar({
   onToggleTheme,
   onMinimize,
 }: Props) {
+  const { t } = useI18n();
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand">
-        <span className="brand-name">剪贴板</span>
+        <span className="brand-name">{t('appName')}</span>
       </div>
       <label className="search" htmlFor="searchInput">
         <span className="search-icon">
@@ -33,7 +35,7 @@ export function Titlebar({
           ref={inputRef}
           value={search}
           onChange={(event) => onSearch(event.target.value)}
-          placeholder="搜索…"
+          placeholder={t('searchPlaceholder')}
           autoComplete="off"
         />
       </label>
@@ -41,12 +43,12 @@ export function Titlebar({
         <button
           className="icon-btn"
           type="button"
-          title="切换主题"
+          title={t('toggleTheme')}
           onClick={onToggleTheme}
         >
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
         </button>
-        <button className="icon-btn" type="button" title="最小化" onClick={onMinimize}>
+        <button className="icon-btn" type="button" title={t('minimize')} onClick={onMinimize}>
           <Icon name="minus" />
         </button>
       </div>

@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use enigo::{
     Direction::{Click, Press, Release},
@@ -7,11 +8,12 @@ use enigo::{
 use tauri::{
     Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-use crate::clipboard::hash::{hash_bytes, hash_files};
 use crate::clipboard::source::{ClipboardSource, SystemClipboard};
 use crate::media;
 use crate::models::{ClipItem, ClipKind};
+use crate::settings::{self, Settings as AppSettings};
 use crate::state::AppState;
 
 fn with_thumb(mut item: ClipItem, state: &AppState) -> ClipItem {
@@ -21,19 +23,22 @@ fn with_thumb(mut item: ClipItem, state: &AppState) -> ClipItem {
     item
 }
 
-fn item_hash(item: &ClipItem, media_dir: &Path) -> Result<String, String> {
-    match item.kind {
-        ClipKind::Text => Ok(hash_bytes(item.content.as_bytes())),
-        ClipKind::Image => {
-            let bytes = std::fs::read(media_dir.join(&item.content)).map_err(|e| e.to_string())?;
-            Ok(hash_bytes(&bytes))
-        }
-        ClipKind::Files => {
-            let files: Vec<String> =
-                serde_json::from_str(&item.content).map_err(|e| e.to_string())?;
-            Ok(hash_files(&files))
-        }
-    }
+fn cleanup_media(app_state: &AppState) {
+    let live = app_state
+        .store
+        .lock()
+        .map(|store| store.image_paths().unwrap_or_default())
+        .unwrap_or_default();
+    media::cleanup_orphans(&app_state.media_dir, &live);
+}
+
+fn arm_suppression(app_state: &AppState) -> Result<(), String> {
+    app_state
+        .suppress
+        .lock()
+        .map_err(|e| e.to_string())?
+        .arm(Duration::from_millis(1500));
+    Ok(())
 }
 
 fn write_item_to_clipboard(app_state: &AppState, id: &str) -> Result<ClipItem, String> {
@@ -43,17 +48,17 @@ fn write_item_to_clipboard(app_state: &AppState, id: &str) -> Result<ClipItem, S
         .map_err(|e| e.to_string())?
         .get(id)
         .map_err(|e| e.to_string())?;
+    let plain_text = app_state
+        .settings
+        .lock()
+        .map(|settings| settings.paste_plain_text)
+        .unwrap_or(false);
 
     let source = SystemClipboard;
-    if !source.write(&item, &app_state.media_dir) {
+    if !source.write_with_options(&item, &app_state.media_dir, plain_text) {
         return Err("写入剪贴板失败".to_string());
     }
-
-    let hash = item_hash(&item, &app_state.media_dir)?;
-    {
-        let mut guard = app_state.suppress.lock().map_err(|e| e.to_string())?;
-        *guard = Some(hash);
-    }
+    arm_suppression(app_state)?;
 
     let updated = {
         let store = app_state.store.lock().map_err(|e| e.to_string())?;
@@ -67,22 +72,25 @@ fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         enigo.key(Key::Meta, Press).map_err(|e| e.to_string())?;
-        enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
+        enigo
+            .key(Key::Unicode('v'), Click)
+            .map_err(|e| e.to_string())?;
         enigo.key(Key::Meta, Release).map_err(|e| e.to_string())?;
     }
     #[cfg(not(target_os = "macos"))]
     {
         enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
-        enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
-        enigo.key(Key::Control, Release).map_err(|e| e.to_string())?;
+        enigo
+            .key(Key::Unicode('v'), Click)
+            .map_err(|e| e.to_string())?;
+        enigo
+            .key(Key::Control, Release)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-fn transfer_items_inner(
-    state: &AppState,
-    ids: &[String],
-) -> Result<Vec<ClipItem>, String> {
+fn transfer_items_inner(state: &AppState, ids: &[String]) -> Result<Vec<ClipItem>, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     let mut items = Vec::new();
     for id in ids {
@@ -135,26 +143,23 @@ fn ensure_transfer_window(app: &tauri::AppHandle) -> Result<WebviewWindow, Strin
         return Ok(window);
     }
 
-    let window = WebviewWindowBuilder::new(
-        app,
-        "transfer",
-        WebviewUrl::App("transfer.html".into()),
-    )
-    .title("临时中转")
-    .inner_size(300.0, 380.0)
-    .min_inner_size(260.0, 260.0)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .transparent(true)
-    .visible(false)
-    .focused(false)
-    .build()
-    .map_err(|e| {
-        eprintln!("build transfer failed: {e}");
-        e.to_string()
-    })?;
+    let window =
+        WebviewWindowBuilder::new(app, "transfer", WebviewUrl::App("transfer.html".into()))
+            .title("临时中转")
+            .inner_size(300.0, 380.0)
+            .min_inner_size(260.0, 260.0)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .transparent(true)
+            .visible(false)
+            .focused(false)
+            .build()
+            .map_err(|e| {
+                eprintln!("build transfer failed: {e}");
+                e.to_string()
+            })?;
 
     position_transfer_window(app, &window)?;
     Ok(window)
@@ -180,7 +185,11 @@ pub fn list_items(
 }
 
 #[tauri::command]
-pub fn toggle_favorite(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
+pub fn toggle_favorite(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ClipItem, String> {
     let app_state = state.inner();
     let item = app_state
         .store
@@ -188,11 +197,16 @@ pub fn toggle_favorite(state: State<'_, AppState>, id: String) -> Result<ClipIte
         .map_err(|e| e.to_string())?
         .toggle_favorite(&id)
         .map_err(|e| e.to_string())?;
+    let _ = app.emit("transfer-changed", ());
     Ok(with_thumb(item, app_state))
 }
 
 #[tauri::command]
-pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
+pub fn toggle_pin(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ClipItem, String> {
     let app_state = state.inner();
     let item = app_state
         .store
@@ -200,29 +214,189 @@ pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<ClipItem, St
         .map_err(|e| e.to_string())?
         .toggle_pin(&id)
         .map_err(|e| e.to_string())?;
+    let _ = app.emit("transfer-changed", ());
     Ok(with_thumb(item, app_state))
 }
 
 #[tauri::command]
-pub fn delete_item(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    state
-        .inner()
+pub fn delete_item(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let app_state = state.inner();
+    app_state
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .delete(&id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    cleanup_media(app_state);
+    let _ = app.emit("transfer-changed", ());
+    Ok(())
 }
 
-#[tauri::command]
-pub fn clear_items(state: State<'_, AppState>) -> Result<(), String> {
+pub fn clear_history(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if let Some(window) = app.get_webview_window("transfer") {
+        let _ = window.hide();
+    }
     state
-        .inner()
+        .transfer_ids
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    state
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .clear()
+        .map_err(|e| e.to_string())?;
+    cleanup_media(state.inner());
+    let _ = app.emit("clipboard-changed", ());
+    let _ = app.emit("transfer-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_items(app: tauri::AppHandle) -> Result<(), String> {
+    clear_history(&app)
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
+    state
+        .inner()
+        .settings
+        .lock()
+        .map(|settings| settings.clone())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_settings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
+    let app_state = state.inner();
+    let normalized = settings.normalized();
+    let previous = app_state
+        .settings
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let autostart_changed = previous.auto_start != normalized.auto_start;
+    if autostart_changed {
+        apply_autostart(&app, normalized.auto_start)?;
+    }
+
+    if previous.hotkey != normalized.hotkey {
+        let manager = app.global_shortcut();
+        let _ = manager.unregister(previous.hotkey.as_str());
+        if let Err(error) = manager.register(normalized.hotkey.as_str()) {
+            let _ = manager.register(previous.hotkey.as_str());
+            if autostart_changed {
+                let _ = apply_autostart(&app, previous.auto_start);
+            }
+            return Err(format!("快捷键注册失败: {error}"));
+        }
+    }
+
+    if let Err(error) = settings::save(&app_state.config_path, &normalized) {
+        if previous.hotkey != normalized.hotkey {
+            let manager = app.global_shortcut();
+            let _ = manager.unregister(normalized.hotkey.as_str());
+            let _ = manager.register(previous.hotkey.as_str());
+        }
+        if previous.auto_start != normalized.auto_start {
+            let _ = apply_autostart(&app, previous.auto_start);
+        }
+        return Err(error);
+    }
+    *app_state.settings.lock().map_err(|e| e.to_string())? = normalized.clone();
+    if previous.language != normalized.language {
+        let _ = crate::tray::refresh(&app);
+    }
+    let _ = app.emit("settings-changed", ());
+    Ok(normalized)
+}
+
+#[tauri::command]
+pub fn toggle_monitoring(app: tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let mut updated = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    updated.monitor_paused = !updated.monitor_paused;
+    settings::save(&state.config_path, &updated)?;
+    *state.settings.lock().map_err(|e| e.to_string())? = updated.clone();
+    let _ = app.emit("settings-changed", ());
+    Ok(updated.monitor_paused)
+}
+
+fn apply_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|error| error.to_string())
+    } else {
+        manager.disable().map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn hide_main(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|error| error.to_string())?;
+    let update = updater.check().await.map_err(|error| error.to_string())?;
+    Ok(update.map(|update| UpdateInfo {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+        body: update.body.clone(),
+        date: update.date.map(|date| date.to_string()),
+    }))
+}
+
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|error| error.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "当前已是最新版本".to_string())?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.restart()
+    }
+    #[cfg(target_os = "windows")]
+    Ok(())
 }
 
 #[tauri::command]
@@ -242,8 +416,7 @@ pub fn paste_item(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
     window.hide().map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -270,16 +443,11 @@ pub fn paste_transfer_item(
         .get_webview_window("transfer")
         .ok_or_else(|| "中转窗口不存在".to_string())?;
     let main = app.get_webview_window("main");
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
     #[cfg(target_os = "windows")]
     {
-        let target = app_state
-            .target_hwnd
-            .lock()
-            .ok()
-            .and_then(|guard| *guard);
+        let target = app_state.target_hwnd.lock().ok().and_then(|guard| *guard);
         if let Some(hwnd) = target {
             if crate::platform::focus_window(hwnd) {
                 std::thread::sleep(std::time::Duration::from_millis(160));
@@ -361,10 +529,7 @@ pub fn transfer_items(state: State<'_, AppState>) -> Result<Vec<ClipItem>, Strin
 }
 
 #[tauri::command]
-pub fn copy_transfer(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<usize, String> {
+pub fn copy_transfer(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
     let app_state = state.inner();
     let ids = app_state
         .transfer_ids
@@ -377,16 +542,28 @@ pub fn copy_transfer(
     }
 
     let source = SystemClipboard;
-    let suppress_hash;
+    let plain_text = app_state
+        .settings
+        .lock()
+        .map(|settings| settings.paste_plain_text)
+        .unwrap_or(false);
     if items.len() == 1 {
         let item = &items[0];
-        if !source.write(item, &app_state.media_dir) {
+        if !source.write_with_options(item, &app_state.media_dir, plain_text) {
             return Err("写入剪贴板失败".to_string());
         }
-        suppress_hash = item_hash(item, &app_state.media_dir)?;
+    } else if items.iter().all(|item| item.kind == ClipKind::Image) {
+        let paths: Vec<PathBuf> = items
+            .iter()
+            .map(|item| app_state.media_dir.join(&item.content))
+            .collect();
+        let png = media::merge_images_vertical(&paths)?;
+        if !source.write_image_png(&png) {
+            return Err("写入合并图片失败".to_string());
+        }
     } else {
         if items.iter().any(|item| item.kind == ClipKind::Image) {
-            return Err("多条合并复制暂不支持图片".to_string());
+            return Err("图片暂不能与文本或文件合并复制".to_string());
         }
         let text = items
             .iter()
@@ -408,17 +585,8 @@ pub fn copy_transfer(
         if !source.write_merged(text_arg, &files) {
             return Err("写入剪贴板失败".to_string());
         }
-        suppress_hash = if files.is_empty() {
-            hash_bytes(text.as_bytes())
-        } else {
-            hash_files(&files)
-        };
     }
-
-    {
-        let mut guard = app_state.suppress.lock().map_err(|e| e.to_string())?;
-        *guard = Some(suppress_hash);
-    }
+    arm_suppression(app_state)?;
     {
         let store = app_state.store.lock().map_err(|e| e.to_string())?;
         for item in &items {
@@ -458,10 +626,7 @@ pub fn favorite_transfer(
 }
 
 #[tauri::command]
-pub fn close_transfer(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn close_transfer(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state
         .inner()
         .transfer_ids
@@ -511,6 +676,7 @@ pub fn image_data_url(state: State<'_, AppState>, id: String) -> Result<String, 
     if item.kind != ClipKind::Image {
         return Err("不是图片条目".to_string());
     }
-    let bytes = std::fs::read(app_state.media_dir.join(&item.content)).map_err(|e| e.to_string())?;
+    let bytes =
+        std::fs::read(app_state.media_dir.join(&item.content)).map_err(|e| e.to_string())?;
     Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
 }

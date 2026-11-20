@@ -3,13 +3,17 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { ClipboardList } from './components/ClipboardList';
 import { PreviewModal } from './components/PreviewModal';
+import { SettingsView } from './components/SettingsView';
 import { SideRail } from './components/SideRail';
 import { Tabs } from './components/Tabs';
 import { Titlebar } from './components/Titlebar';
 import { Toast } from './components/Toast';
-import { onClipboardChanged } from './lib/ipc';
+import * as ipc from './lib/ipc';
+import { useI18n } from './lib/useI18n';
+import { useTheme } from './lib/useTheme';
 import type { ClipItem, TabKey } from './lib/types';
 import { useClipboard } from './stores/clipboard';
+import { useSettings } from './stores/settings';
 import { useUi } from './stores/ui';
 
 const TAB_ORDER: TabKey[] = ['all', 'text', 'image', 'files', 'favorite'];
@@ -29,6 +33,7 @@ export default function App() {
   const setQuery = useClipboard((state) => state.setQuery);
   const select = useClipboard((state) => state.select);
   const toggleSelection = useClipboard((state) => state.toggleSelection);
+  const clearSelection = useClipboard((state) => state.clearSelection);
   const openTransfer = useClipboard((state) => state.openTransfer);
   const toggleFavorite = useClipboard((state) => state.toggleFavorite);
   const togglePin = useClipboard((state) => state.togglePin);
@@ -38,28 +43,85 @@ export default function App() {
   const clear = useClipboard((state) => state.clear);
   const clearError = useClipboard((state) => state.clearError);
   const toast = useUi((state) => state.toast);
+  const settings = useSettings((state) => state.settings);
+  const initSettings = useSettings((state) => state.init);
+  const settingsError = useSettings((state) => state.error);
+  const clearSettingsError = useSettings((state) => state.clearError);
+  const { theme, toggleTheme } = useTheme();
+  const { t } = useI18n();
 
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [search, setSearch] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ClipItem | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
+  const paused = settings?.monitorPaused ?? false;
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    void initSettings();
+  }, [initSettings]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    const disposers: Array<() => void> = [];
     let disposed = false;
+
+    const bind = (promise: Promise<() => void>) => {
+      promise
+        .then((unlisten) => {
+          if (disposed) unlisten();
+          else disposers.push(unlisten);
+        })
+        .catch(() => undefined);
+    };
+
+    bind(ipc.onClipboardChanged(() => void load()));
+    bind(
+      ipc.onMainShown(() => {
+        setSearch('');
+        setSettingsOpen(false);
+        setPreviewItem(null);
+        clearSelection();
+        setQuery('');
+      }),
+    );
+    bind(ipc.onOpenSettings(() => setSettingsOpen(true)));
+    bind(ipc.onToastMessage((message) => toast(message)));
+    bind(ipc.onToastKey((key) => toast(t(key))));
+    bind(ipc.onUpdateAvailable((version) => toast(t('updateAvailable', { version }))));
+
+    return () => {
+      disposed = true;
+      disposers.forEach((dispose) => dispose());
+    };
+  }, [load, toast, t, clearSelection, setQuery]);
+
+  useEffect(() => {
+    if (!error) return;
+    toast(error);
+    clearError();
+  }, [error, toast, clearError]);
+
+  useEffect(() => {
+    if (!settingsError) return;
+    toast(settingsError);
+    clearSettingsError();
+  }, [settingsError, toast, clearSettingsError]);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
-    onClipboardChanged(() => {
-      void load();
-    })
+    let disposed = false;
+    ipc
+      .onRequestClear(() => {
+        if (!window.confirm(t('clearConfirm'))) return;
+        void clear()
+          .then(() => toast(t('historyCleared')))
+          .catch((cause) => toast(String(cause)));
+      })
       .then((fn) => {
         if (disposed) fn();
         else unlisten = fn;
@@ -69,13 +131,7 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [load]);
-
-  useEffect(() => {
-    if (!error) return;
-    toast(error);
-    clearError();
-  }, [error, toast, clearError]);
+  }, [clear, toast, t]);
 
   useEffect(() => {
     if (search === query) return;
@@ -93,26 +149,26 @@ export default function App() {
   };
 
   const copyCurrent = () => {
-    if (selected) void run(() => copy(selected.id), '已复制');
+    if (selected) void run(() => copy(selected.id), t('copied'));
   };
   const favoriteCurrent = () => {
     if (selected) {
       void run(
         () => toggleFavorite(selected.id),
-        selected.favorite ? '已取消收藏' : '已收藏',
+        selected.favorite ? t('favoriteRemoved') : t('favoriteAdded'),
       );
     }
   };
   const pinCurrent = () => {
     if (selected) {
-      void run(() => togglePin(selected.id), selected.pinned ? '已取消置顶' : '已置顶');
+      void run(() => togglePin(selected.id), selected.pinned ? t('unpinned') : t('pinned'));
     }
   };
   const deleteCurrent = () => {
-    if (selected) void run(() => remove(selected.id), '已删除');
+    if (selected) void run(() => remove(selected.id), t('deleted'));
   };
   const clearAll = () => {
-    if (window.confirm('确定清空全部剪贴板历史？')) void run(clear, '历史已清空');
+    if (window.confirm(t('clearConfirm'))) void run(clear, t('historyCleared'));
   };
   const minimize = () => {
     void getCurrentWindow()
@@ -132,7 +188,7 @@ export default function App() {
         ? [selected.id]
         : [];
     if (!ids.length) {
-      toast('请先选择内容');
+      toast(t('selectFirst'));
       return;
     }
     void run(() => openTransfer(ids));
@@ -143,6 +199,14 @@ export default function App() {
       const target = event.target as HTMLElement | null;
       const inInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
       const meta = event.metaKey || event.ctrlKey;
+
+      if (settingsOpen) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setSettingsOpen(false);
+        }
+        return;
+      }
 
       if (previewItem) {
         if (event.key === 'Escape') {
@@ -163,6 +227,8 @@ export default function App() {
         } else if (search) {
           setSearch('');
           setQuery('');
+        } else {
+          void ipc.hideMain();
         }
         return;
       }
@@ -209,7 +275,7 @@ export default function App() {
       }
       if (meta && event.key.toLowerCase() === 'c') {
         event.preventDefault();
-        if (current) void run(() => copy(current.id), '已复制');
+        if (current) void run(() => copy(current.id), t('copied'));
         return;
       }
       if (meta && event.key.toLowerCase() === 'd') {
@@ -217,7 +283,7 @@ export default function App() {
         if (current) {
           void run(
             () => toggleFavorite(current.id),
-            current.favorite ? '已取消收藏' : '已收藏',
+            current.favorite ? t('favoriteRemoved') : t('favoriteAdded'),
           );
         }
         return;
@@ -227,19 +293,27 @@ export default function App() {
         if (current) {
           void run(
             () => togglePin(current.id),
-            current.pinned ? '已取消置顶' : '已置顶',
+            current.pinned ? t('unpinned') : t('pinned'),
           );
         }
         return;
       }
       if (event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) {
         event.preventDefault();
-        if (current) void run(() => remove(current.id), '已删除');
+        if (current) void run(() => remove(current.id), t('deleted'));
         return;
       }
       if (event.key === ' ') {
         event.preventDefault();
         if (current) setPreviewItem(current);
+        return;
+      }
+      if (/^[1-9]$/.test(event.key)) {
+        const targetItem = items[Number(event.key) - 1];
+        if (targetItem) {
+          event.preventDefault();
+          void run(() => paste(targetItem.id));
+        }
         return;
       }
       if (event.key === '/') {
@@ -261,6 +335,7 @@ export default function App() {
     selectedId,
     search,
     previewItem,
+    settingsOpen,
     tab,
     copy,
     paste,
@@ -271,6 +346,7 @@ export default function App() {
     setQuery,
     setTab,
     toast,
+    t,
   ]);
 
   return (
@@ -280,7 +356,7 @@ export default function App() {
         inputRef={inputRef}
         onSearch={setSearch}
         theme={theme}
-        onToggleTheme={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
+        onToggleTheme={toggleTheme}
         onMinimize={minimize}
       />
       <Tabs tab={tab} favoriteCount={favoriteCount} onChange={setTab} />
@@ -291,10 +367,11 @@ export default function App() {
           selectedIds={selectedIds}
           loading={loading}
           onSelect={handleSelect}
-          onCopy={(id) => void run(() => copy(id), '已复制')}
+          onCopy={(id) => void run(() => copy(id), t('copied'))}
           onPaste={(id) => void run(() => paste(id))}
           onFavorite={(id) => void run(() => toggleFavorite(id))}
-          onDelete={(id) => void run(() => remove(id), '已删除')}
+          onPin={(id) => void run(() => togglePin(id))}
+          onDelete={(id) => void run(() => remove(id), t('deleted'))}
         />
         <SideRail
           hasSelection={Boolean(selected)}
@@ -302,11 +379,14 @@ export default function App() {
           onCopy={copyCurrent}
           onFavorite={favoriteCurrent}
           onTransfer={openTransferWindow}
-          onSettings={() => toast('设置将在 M3 提供')}
+          onSettings={() => setSettingsOpen(true)}
           onClear={clearAll}
         />
-        <div className="status-float">监控中 · 共 {totalCount} 条</div>
+        <div className={`status-float ${paused ? 'paused' : ''}`}>
+          {paused ? t('paused') : t('monitoring')} · {t('totalCount', { n: totalCount })}
+        </div>
       </div>
+      {settingsOpen && <SettingsView onClose={() => setSettingsOpen(false)} />}
       {previewItem && (
         <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
       )}

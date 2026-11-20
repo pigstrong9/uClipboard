@@ -41,3 +41,33 @@ export function parseFiles(content: string): string[] {
     return [];
   }
 }
+
+export type ThemeSetting = 'system' | 'light' | 'dark';
+export type LanguageSetting = 'system' | 'zh-CN' | 'en-US';
+
+export interface Settings {
+  hotkey: string;
+  autoStart: boolean;
+  hideOnBlur: boolean;
+  theme: ThemeSetting;
+  language: LanguageSetting;
+  historyLimit: number;
+  retentionDays: number;
+  recordText: boolean;
+  recordImages: boolean;
+  recordFiles: boolean;
+  minTextLength: number;
+  ignoredApps: string[];
+  pastePlainText: boolean;
+  autoUpdate: boolean;
+  monitorPaused: boolean;
+  maxTextBytes: number;
+  maxImageBytes: number;
+}
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  body: string | null;
+  date: string | null;
+}

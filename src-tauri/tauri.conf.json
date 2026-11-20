@@ -21,6 +21,7 @@
         "decorations": false,
         "skipTaskbar": true,
         "center": true,
+        "visible": false,
         "resizable": true
       }
     ],
@@ -28,9 +29,20 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyRDdERTE4RTA4MDRDQTUKUldTbFRJRGdHTjdYNGtTclRjZkZQeG1wbGNlWmpoNFFBNVAxK3p5ejhvU1ZBTC9wbm5XZmF6QzEK",
+      "endpoints": [
+        "https://github.com/pigstrong9/uClipboard/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": false,
+    "shortDescription": "跨平台开源剪贴板管理器",
+    "longDescription": "uClipboard 自动记录文本、图片和文件剪贴板历史，支持搜索、收藏、置顶、全局快捷键和临时中转。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
