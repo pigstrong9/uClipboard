@@ -2,6 +2,7 @@ mod clipboard;
 mod commands;
 mod media;
 mod models;
+mod platform;
 mod state;
 mod storage;
 
@@ -18,6 +19,16 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+fn remember_target(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<state::AppState>() {
+        if let Some(hwnd) = platform::foreground_target() {
+            if let Ok(mut guard) = state.target_hwnd.lock() {
+                *guard = Some(hwnd);
+            }
+        }
+    }
+}
+
 fn toggle_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
@@ -25,6 +36,7 @@ fn toggle_main(app: &tauri::AppHandle) {
         if visible && !minimized {
             let _ = window.hide();
         } else {
+            remember_target(app);
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
@@ -63,6 +75,7 @@ pub fn run() {
                 suppress: suppress.clone(),
                 media_dir: media_dir.clone(),
                 transfer_ids: Mutex::new(Vec::new()),
+                target_hwnd: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
