@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -15,26 +16,26 @@ use crate::clipboard::source::{ClipboardSource, SystemClipboard};
 use crate::media;
 use crate::models::{ClipItem, ClipKind};
 use crate::settings::{self, Settings as AppSettings};
-use crate::state::AppState;
+use crate::state::{AppState, SharedState};
 
-fn with_thumb(mut item: ClipItem, state: &AppState) -> ClipItem {
+fn with_thumb(mut item: ClipItem, shared: &SharedState) -> ClipItem {
     if item.kind == ClipKind::Image {
-        item.thumb_data_url = media::thumb_data_url(&state.media_dir, &item.content);
+        item.thumb_data_url = media::thumb_data_url(&shared.media_dir, &item.content);
     }
     item
 }
 
-fn cleanup_media(app_state: &AppState) {
-    let live = app_state
-        .store
-        .lock()
-        .map(|store| store.image_paths().unwrap_or_default())
-        .unwrap_or_default();
-    media::cleanup_orphans(&app_state.media_dir, &live);
+fn cleanup_media(shared: &SharedState) -> Result<(), String> {
+    let live = {
+        let store = shared.store.lock().map_err(|e| e.to_string())?;
+        store.image_paths().map_err(|e| e.to_string())?
+    };
+    media::cleanup_orphans(&shared.media_dir, &live);
+    Ok(())
 }
 
-fn arm_suppression(app_state: &AppState) -> Result<(), String> {
-    app_state
+fn arm_suppression(shared: &SharedState) -> Result<(), String> {
+    shared
         .suppress
         .lock()
         .map_err(|e| e.to_string())?
@@ -42,31 +43,31 @@ fn arm_suppression(app_state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-fn write_item_to_clipboard(app_state: &AppState, id: &str) -> Result<ClipItem, String> {
-    let item = app_state
+fn write_item_to_clipboard(shared: &SharedState, id: &str) -> Result<ClipItem, String> {
+    let item = shared
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .get(id)
         .map_err(|e| e.to_string())?;
-    let plain_text = app_state
+    let plain_text = shared
         .settings
         .lock()
         .map(|settings| settings.paste_plain_text)
         .unwrap_or(false);
 
     let source = SystemClipboard;
-    if !source.write_with_options(&item, &app_state.media_dir, plain_text) {
+    if !source.write_with_options(&item, &shared.media_dir, plain_text) {
         return Err("写入剪贴板失败".to_string());
     }
-    arm_suppression(app_state)?;
+    arm_suppression(shared)?;
 
     let updated = {
-        let store = app_state.store.lock().map_err(|e| e.to_string())?;
+        let store = shared.store.lock().map_err(|e| e.to_string())?;
         store.touch(id).map_err(|e| e.to_string())?;
         store.get(id).map_err(|e| e.to_string())?
     };
-    Ok(with_thumb(updated, app_state))
+    Ok(with_thumb(updated, shared))
 }
 
 #[cfg(target_os = "windows")]
@@ -105,15 +106,17 @@ fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
     Ok(())
 }
 
-fn transfer_items_inner(state: &AppState, ids: &[String]) -> Result<Vec<ClipItem>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    let mut items = Vec::new();
-    for id in ids {
-        if let Ok(item) = store.get(id) {
-            items.push(with_thumb(item, state));
-        }
-    }
-    Ok(items)
+fn transfer_items_inner(shared: &SharedState, ids: &[String]) -> Result<Vec<ClipItem>, String> {
+    let items = {
+        let store = shared.store.lock().map_err(|e| e.to_string())?;
+        ids.iter()
+            .filter_map(|id| store.get(id).ok())
+            .collect::<Vec<_>>()
+    };
+    Ok(items
+        .into_iter()
+        .map(|item| with_thumb(item, shared))
+        .collect())
 }
 
 fn position_transfer_window(
@@ -186,8 +189,8 @@ pub fn list_items(
     tab: String,
     query: String,
 ) -> Result<Vec<ClipItem>, String> {
-    let app_state = state.inner();
-    let limit = app_state
+    let shared = state.shared();
+    let limit = shared
         .settings
         .lock()
         .map(|settings| {
@@ -198,7 +201,7 @@ pub fn list_items(
             }
         })
         .unwrap_or(500);
-    let items = app_state
+    let items = shared
         .store
         .lock()
         .map_err(|e| e.to_string())?
@@ -206,7 +209,7 @@ pub fn list_items(
         .map_err(|e| e.to_string())?;
     Ok(items
         .into_iter()
-        .map(|item| with_thumb(item, app_state))
+        .map(|item| with_thumb(item, &shared))
         .collect())
 }
 
@@ -216,15 +219,15 @@ pub fn toggle_favorite(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ClipItem, String> {
-    let app_state = state.inner();
-    let item = app_state
+    let shared = state.shared();
+    let item = shared
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .toggle_favorite(&id)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("transfer-changed", ());
-    Ok(with_thumb(item, app_state))
+    Ok(with_thumb(item, &shared))
 }
 
 #[tauri::command]
@@ -233,15 +236,15 @@ pub fn toggle_pin(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ClipItem, String> {
-    let app_state = state.inner();
-    let item = app_state
+    let shared = state.shared();
+    let item = shared
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .toggle_pin(&id)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("transfer-changed", ());
-    Ok(with_thumb(item, app_state))
+    Ok(with_thumb(item, &shared))
 }
 
 #[tauri::command]
@@ -250,14 +253,16 @@ pub fn delete_item(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let app_state = state.inner();
-    app_state
+    let shared = state.shared();
+    shared
         .store
         .lock()
         .map_err(|e| e.to_string())?
         .delete(&id)
         .map_err(|e| e.to_string())?;
-    cleanup_media(app_state);
+    if let Err(error) = cleanup_media(&shared) {
+        eprintln!("media cleanup skipped after delete: {error}");
+    }
     let _ = app.emit("transfer-changed", ());
     Ok(())
 }
@@ -278,7 +283,9 @@ pub fn clear_history(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .clear()
         .map_err(|e| e.to_string())?;
-    cleanup_media(state.inner());
+    if let Err(error) = cleanup_media(&state.shared()) {
+        eprintln!("media cleanup skipped after clear: {error}");
+    }
     let _ = app.emit("clipboard-changed", ());
     let _ = app.emit("transfer-changed", ());
     Ok(())
@@ -435,7 +442,10 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn copy_item(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
-    write_item_to_clipboard(state.inner(), &id)
+    let shared = state.shared();
+    tauri::async_runtime::spawn_blocking(move || write_item_to_clipboard(&shared, &id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -444,14 +454,13 @@ pub async fn paste_item(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ClipItem, String> {
-    let app_state = state.inner();
-    let updated = write_item_to_clipboard(app_state, &id)?;
-
+    let shared = state.shared();
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let task_window = window.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<ClipItem, String> {
+        let updated = write_item_to_clipboard(&shared, &id)?;
         #[cfg(target_os = "windows")]
         let mut enigo = ();
         #[cfg(not(target_os = "windows"))]
@@ -459,19 +468,21 @@ pub async fn paste_item(
             Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
         task_window.hide().map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        send_paste_shortcut(&mut enigo)
+        std::thread::sleep(Duration::from_millis(200));
+        send_paste_shortcut(&mut enigo).map_err(|error| format!("自动粘贴失败: {error}"))?;
+        Ok(updated)
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    if let Err(error) = result {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Err(format!("自动粘贴失败: {error}"));
+    match result {
+        Ok(updated) => Ok(updated),
+        Err(error) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+            Err(error)
+        }
     }
-
-    Ok(updated)
 }
 
 #[tauri::command]
@@ -480,16 +491,15 @@ pub async fn paste_transfer_item(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ClipItem, String> {
-    let app_state = state.inner();
-    let updated = write_item_to_clipboard(app_state, &id)?;
-
+    let shared = state.shared();
     let transfer = app
         .get_webview_window("transfer")
         .ok_or_else(|| "中转窗口不存在".to_string())?;
 
     let task_app = app.clone();
     let task_transfer = transfer.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<ClipItem, String> {
+        let updated = write_item_to_clipboard(&shared, &id)?;
         #[cfg(target_os = "windows")]
         let mut enigo = ();
         #[cfg(not(target_os = "windows"))]
@@ -506,9 +516,9 @@ pub async fn paste_transfer_item(
                 .and_then(|guard| *guard);
             if let Some(hwnd) = target {
                 if crate::platform::focus_window(hwnd) {
-                    std::thread::sleep(std::time::Duration::from_millis(160));
+                    std::thread::sleep(Duration::from_millis(160));
                     if send_paste_shortcut(&mut enigo).is_ok() {
-                        return Ok(());
+                        return Ok(updated);
                     }
                 }
             }
@@ -520,25 +530,28 @@ pub async fn paste_transfer_item(
                 let _ = main.hide();
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(200));
 
-        send_paste_shortcut(&mut enigo)?;
+        send_paste_shortcut(&mut enigo).map_err(|error| format!("自动粘贴失败: {error}"))?;
 
-        std::thread::sleep(std::time::Duration::from_millis(120));
+        std::thread::sleep(Duration::from_millis(120));
         task_transfer.show().map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(updated)
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    if let Err(error) = result {
-        let _ = transfer.show();
-        let _ = transfer.set_focus();
-        return Err(format!("自动粘贴失败: {error}"));
+    match result {
+        Ok(updated) => {
+            let _ = app.emit("clipboard-changed", ());
+            Ok(updated)
+        }
+        Err(error) => {
+            let _ = transfer.show();
+            let _ = transfer.set_focus();
+            Err(error)
+        }
     }
-
-    let _ = app.emit("clipboard-changed", ());
-    Ok(updated)
 }
 
 #[tauri::command]
@@ -547,25 +560,27 @@ pub async fn open_transfer(
     state: State<'_, AppState>,
     ids: Vec<String>,
 ) -> Result<Vec<ClipItem>, String> {
-    let app_state = state.inner();
-    let mut unique: Vec<String> = Vec::new();
-    {
-        let store = app_state.store.lock().map_err(|e| e.to_string())?;
+    let shared = state.shared();
+    let unique = {
+        let store = shared.store.lock().map_err(|e| e.to_string())?;
+        let mut seen = HashSet::new();
+        let mut unique = Vec::new();
         for id in ids {
-            if unique.iter().any(|existing| existing == &id) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
             if store.get(&id).is_ok() {
                 unique.push(id);
             }
         }
-    }
+        unique
+    };
 
     if unique.is_empty() {
         return Ok(Vec::new());
     }
 
-    *app_state.transfer_ids.lock().map_err(|e| e.to_string())? = unique.clone();
+    *state.transfer_ids.lock().map_err(|e| e.to_string())? = unique.clone();
     let window = ensure_transfer_window(&app).map_err(|e| {
         eprintln!("open_transfer ensure failed: {e}");
         e
@@ -576,18 +591,18 @@ pub async fn open_transfer(
     })?;
     app.emit("transfer-changed", ())
         .map_err(|e| e.to_string())?;
-    transfer_items_inner(app_state, &unique)
+    transfer_items_inner(&shared, &unique)
 }
 
 #[tauri::command]
 pub fn transfer_items(state: State<'_, AppState>) -> Result<Vec<ClipItem>, String> {
-    let app_state = state.inner();
-    let ids = app_state
+    let shared = state.shared();
+    let ids = state
         .transfer_ids
         .lock()
         .map_err(|e| e.to_string())?
         .clone();
-    transfer_items_inner(app_state, &ids)
+    transfer_items_inner(&shared, &ids)
 }
 
 #[tauri::command]
@@ -595,71 +610,76 @@ pub async fn copy_transfer(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    let app_state = state.inner();
-    let ids = app_state
+    let shared = state.shared();
+    let ids = state
         .transfer_ids
         .lock()
         .map_err(|e| e.to_string())?
         .clone();
-    let items = transfer_items_inner(app_state, &ids)?;
-    if items.is_empty() {
-        return Err("没有可复制的内容".to_string());
-    }
+    let count = tauri::async_runtime::spawn_blocking(move || -> Result<usize, String> {
+        let items = transfer_items_inner(&shared, &ids)?;
+        if items.is_empty() {
+            return Err("没有可复制的内容".to_string());
+        }
 
-    let source = SystemClipboard;
-    let plain_text = app_state
-        .settings
-        .lock()
-        .map(|settings| settings.paste_plain_text)
-        .unwrap_or(false);
-    if items.len() == 1 {
-        let item = &items[0];
-        if !source.write_with_options(item, &app_state.media_dir, plain_text) {
-            return Err("写入剪贴板失败".to_string());
-        }
-    } else if items.iter().all(|item| item.kind == ClipKind::Image) {
-        let paths: Vec<PathBuf> = items
-            .iter()
-            .map(|item| app_state.media_dir.join(&item.content))
-            .collect();
-        let png = media::merge_images_vertical(&paths)?;
-        if !source.write_image_png(&png) {
-            return Err("写入合并图片失败".to_string());
-        }
-    } else {
-        if items.iter().any(|item| item.kind == ClipKind::Image) {
-            return Err("图片暂不能与文本或文件合并复制".to_string());
-        }
-        let text = items
-            .iter()
-            .filter(|item| item.kind == ClipKind::Text)
-            .map(|item| item.content.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut files = Vec::new();
-        for item in items.iter().filter(|item| item.kind == ClipKind::Files) {
-            if let Ok(paths) = serde_json::from_str::<Vec<String>>(&item.content) {
-                files.extend(paths);
+        let source = SystemClipboard;
+        let plain_text = shared
+            .settings
+            .lock()
+            .map(|settings| settings.paste_plain_text)
+            .unwrap_or(false);
+        if items.len() == 1 {
+            let item = &items[0];
+            if !source.write_with_options(item, &shared.media_dir, plain_text) {
+                return Err("写入剪贴板失败".to_string());
+            }
+        } else if items.iter().all(|item| item.kind == ClipKind::Image) {
+            let paths: Vec<PathBuf> = items
+                .iter()
+                .map(|item| shared.media_dir.join(&item.content))
+                .collect();
+            let png = media::merge_images_vertical(&paths)?;
+            if !source.write_image_png(&png) {
+                return Err("写入合并图片失败".to_string());
+            }
+        } else {
+            if items.iter().any(|item| item.kind == ClipKind::Image) {
+                return Err("图片暂不能与文本或文件合并复制".to_string());
+            }
+            let text = items
+                .iter()
+                .filter(|item| item.kind == ClipKind::Text)
+                .map(|item| item.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut files = Vec::new();
+            for item in items.iter().filter(|item| item.kind == ClipKind::Files) {
+                if let Ok(paths) = serde_json::from_str::<Vec<String>>(&item.content) {
+                    files.extend(paths);
+                }
+            }
+            let text_arg = if text.is_empty() {
+                None
+            } else {
+                Some(text.as_str())
+            };
+            if !source.write_merged(text_arg, &files) {
+                return Err("写入剪贴板失败".to_string());
             }
         }
-        let text_arg = if text.is_empty() {
-            None
-        } else {
-            Some(text.as_str())
-        };
-        if !source.write_merged(text_arg, &files) {
-            return Err("写入剪贴板失败".to_string());
+        arm_suppression(&shared)?;
+        {
+            let store = shared.store.lock().map_err(|e| e.to_string())?;
+            for item in &items {
+                store.touch(&item.id).map_err(|e| e.to_string())?;
+            }
         }
-    }
-    arm_suppression(app_state)?;
-    {
-        let store = app_state.store.lock().map_err(|e| e.to_string())?;
-        for item in &items {
-            store.touch(&item.id).map_err(|e| e.to_string())?;
-        }
-    }
+        Ok(items.len())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let _ = app.emit("clipboard-changed", ());
-    Ok(items.len())
+    Ok(count)
 }
 
 #[tauri::command]
@@ -744,4 +764,48 @@ pub fn image_file_path(state: State<'_, AppState>, id: String) -> Result<String,
         .join(&item.content)
         .to_string_lossy()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state;
+    use crate::storage::Store;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn cleanup_media_keeps_images_when_the_store_is_unavailable() {
+        let dir = std::env::temp_dir().join(format!("uclipboard-cleanup-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(dir.join("images")).unwrap();
+        let image = dir.join("images").join("deadbeef.png");
+        std::fs::write(&image, b"png").unwrap();
+
+        let store = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+        {
+            let poisoned = Arc::clone(&store);
+            let handle = std::thread::spawn(move || {
+                let _guard = poisoned.lock().unwrap_or_else(|error| error.into_inner());
+                panic!("poison the store mutex");
+            });
+            let _ = handle.join();
+        }
+
+        let app_state = AppState {
+            store,
+            settings: Arc::new(Mutex::new(AppSettings::default())),
+            config_path: dir.join("config.json"),
+            suppress: Arc::new(Mutex::new(state::Suppression::default())),
+            media_dir: dir.clone(),
+            transfer_ids: Mutex::new(Vec::new()),
+            target_hwnd: Mutex::new(None),
+        };
+
+        assert!(cleanup_media(&app_state.shared()).is_err());
+        assert!(image.exists(), "an unreadable store must not delete images");
+
+        // An empty live list wipes everything, which is what the old fallback produced.
+        media::cleanup_orphans(&dir, &[]);
+        assert!(!image.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

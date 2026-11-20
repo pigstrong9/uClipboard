@@ -16,7 +16,14 @@ fn labels(app: &AppHandle) -> (String, String, String, String, String) {
                 .map(|settings| settings.language.clone())
         })
         .unwrap_or_else(|| "system".to_string());
-    if language == "en-US" {
+    let english = match language.as_str() {
+        "en-US" => true,
+        "zh-CN" => false,
+        // "system" is resolved the same way the webview resolves it, so the tray and the
+        // interface cannot disagree about which language the user is looking at.
+        _ => crate::platform::system_language() == "en-US",
+    };
+    if english {
         (
             "Show uClipboard".to_string(),
             "Pause / Resume".to_string(),

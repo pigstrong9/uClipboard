@@ -41,3 +41,24 @@ pub struct AppState {
     pub transfer_ids: Mutex<Vec<String>>,
     pub target_hwnd: Mutex<Option<isize>>,
 }
+
+/// The subset of [`AppState`] that commands hand to blocking tasks. `State<'_, AppState>`
+/// is borrowed, so anything wanting to run on a `spawn_blocking` thread clones this instead.
+#[derive(Clone)]
+pub struct SharedState {
+    pub store: Arc<Mutex<Store>>,
+    pub settings: Arc<Mutex<Settings>>,
+    pub suppress: Arc<Mutex<Suppression>>,
+    pub media_dir: PathBuf,
+}
+
+impl AppState {
+    pub fn shared(&self) -> SharedState {
+        SharedState {
+            store: Arc::clone(&self.store),
+            settings: Arc::clone(&self.settings),
+            suppress: Arc::clone(&self.suppress),
+            media_dir: self.media_dir.clone(),
+        }
+    }
+}

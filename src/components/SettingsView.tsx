@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FocusEvent } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 
-import { ConfirmDialog } from './ConfirmDialog';
 import * as ipc from '../lib/ipc';
 import { Icon } from '../lib/icons';
 import { useI18n } from '../lib/useI18n';
@@ -33,6 +32,7 @@ export function SettingsView({ onClose }: Props) {
   const settings = useSettings((state) => state.settings);
   const save = useSettings((state) => state.save);
   const toast = useUi((state) => state.toast);
+  const ask = useUi((state) => state.ask);
   const [section, setSection] = useState<Section>('basic');
   const [hotkey, setHotkey] = useState('');
   const [ignored, setIgnored] = useState('');
@@ -40,13 +40,21 @@ export function SettingsView({ onClose }: Props) {
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
+
+  const persistedHotkey = settings?.hotkey;
+  const persistedIgnored = settings?.ignoredApps.join('\n');
+
+  // Sync from the persisted value, not from the settings object: an unrelated toggle
+  // reloads settings and would otherwise discard what the user is typing here.
+  useEffect(() => {
+    if (persistedHotkey === undefined) return;
+    setHotkey(persistedHotkey);
+  }, [persistedHotkey]);
 
   useEffect(() => {
-    if (!settings) return;
-    setHotkey(settings.hotkey);
-    setIgnored(settings.ignoredApps.join('\n'));
-  }, [settings]);
+    if (persistedIgnored === undefined) return;
+    setIgnored(persistedIgnored);
+  }, [persistedIgnored]);
 
   useEffect(() => {
     getVersion()
@@ -61,6 +69,19 @@ export function SettingsView({ onClose }: Props) {
     } catch (error) {
       toast(String(error));
     }
+  };
+
+  const commitNumber = (
+    event: FocusEvent<HTMLInputElement>,
+    current: number,
+    apply: (value: number) => Partial<Settings>,
+  ) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) {
+      event.target.value = String(current);
+      return;
+    }
+    void commit(apply(value));
   };
 
   if (!settings) {
@@ -122,14 +143,17 @@ export function SettingsView({ onClose }: Props) {
     }
   };
 
-  const clearAll = async () => {
-    try {
-      await ipc.clearItems();
-      useClipboard.setState({ selectedId: null, selectedIds: [] });
-      toast(t('allDataCleared'));
-    } catch (error) {
-      toast(String(error));
-    }
+  const askClear = () => {
+    ask({
+      message: t('confirmClearAllData'),
+      onConfirm: () => {
+        void useClipboard
+          .getState()
+          .clear()
+          .then(() => toast(t('allDataCleared')))
+          .catch((cause) => toast(String(cause)));
+      },
+    });
   };
 
   const title =
@@ -269,7 +293,9 @@ export function SettingsView({ onClose }: Props) {
                 min={0}
                 max={10000}
                 defaultValue={settings.historyLimit}
-                onBlur={(event) => void commit({ historyLimit: Number(event.target.value) })}
+                onBlur={(event) =>
+                  commitNumber(event, settings.historyLimit, (value) => ({ historyLimit: value }))
+                }
               />
             </label>
             <span className="settings-note settings-note-row">{t('historyLimitNote')}</span>
@@ -282,7 +308,9 @@ export function SettingsView({ onClose }: Props) {
                 min={0}
                 max={3650}
                 defaultValue={settings.retentionDays}
-                onBlur={(event) => void commit({ retentionDays: Number(event.target.value) })}
+                onBlur={(event) =>
+                  commitNumber(event, settings.retentionDays, (value) => ({ retentionDays: value }))
+                }
               />
             </label>
             <span className="settings-note settings-note-row">{t('retentionDaysNote')}</span>
@@ -319,7 +347,9 @@ export function SettingsView({ onClose }: Props) {
                 min={1}
                 max={100}
                 defaultValue={settings.minTextLength}
-                onBlur={(event) => void commit({ minTextLength: Number(event.target.value) })}
+                onBlur={(event) =>
+                  commitNumber(event, settings.minTextLength, (value) => ({ minTextLength: value }))
+                }
               />
             </label>
             <label className="setting-row">
@@ -370,7 +400,7 @@ export function SettingsView({ onClose }: Props) {
               <button
                 type="button"
                 className="settings-button danger"
-                onClick={() => setConfirmClear(true)}
+                onClick={askClear}
               >
                 {t('clearAllData')}
               </button>
@@ -426,16 +456,6 @@ export function SettingsView({ onClose }: Props) {
           </div>
         )}
       </div>
-      {confirmClear && (
-        <ConfirmDialog
-          message={t('confirmClearAllData')}
-          onCancel={() => setConfirmClear(false)}
-          onConfirm={() => {
-            setConfirmClear(false);
-            void clearAll();
-          }}
-        />
-      )}
     </section>
   );
 }

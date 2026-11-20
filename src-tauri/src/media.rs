@@ -56,6 +56,8 @@ pub fn remove_media_files(media_dir: &Path, rel_paths: &[String]) {
     }
 }
 
+/// Deletes unreferenced files under `images/`. An empty `live_paths` deletes them all, so
+/// callers must pass a list the database actually returned, never a failed-read fallback.
 pub fn cleanup_orphans(media_dir: &Path, live_paths: &[String]) {
     let images = media_dir.join("images");
     let Ok(entries) = std::fs::read_dir(&images) else {

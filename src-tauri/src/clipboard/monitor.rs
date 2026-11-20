@@ -123,12 +123,18 @@ fn raw_hash(capture: &RawCapture) -> Option<String> {
 }
 
 fn prune_and_cleanup(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Settings) {
-    let live = match store.lock() {
-        Ok(store) => {
-            let _ = store.prune(settings.history_limit, settings.retention_days);
-            store.image_paths().unwrap_or_default()
+    let live = {
+        let Ok(store) = store.lock() else {
+            return;
+        };
+        let _ = store.prune(settings.history_limit, settings.retention_days);
+        match store.image_paths() {
+            Ok(live) => live,
+            Err(error) => {
+                eprintln!("media cleanup skipped: {error}");
+                return;
+            }
         }
-        Err(_) => return,
     };
     media::cleanup_orphans(media_dir, &live);
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { ClipboardList } from './components/ClipboardList';
@@ -44,6 +44,9 @@ export default function App() {
   const clear = useClipboard((state) => state.clear);
   const clearError = useClipboard((state) => state.clearError);
   const toast = useUi((state) => state.toast);
+  const confirm = useUi((state) => state.confirm);
+  const ask = useUi((state) => state.ask);
+  const answer = useUi((state) => state.answer);
   const settings = useSettings((state) => state.settings);
   const initSettings = useSettings((state) => state.init);
   const settingsError = useSettings((state) => state.error);
@@ -54,7 +57,6 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ClipItem | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
@@ -114,13 +116,22 @@ export default function App() {
     clearSettingsError();
   }, [settingsError, toast, clearSettingsError]);
 
+  const askClear = useCallback(() => {
+    ask({
+      message: t('clearConfirm'),
+      onConfirm: () => {
+        void clear()
+          .then(() => toast(t('historyCleared')))
+          .catch((cause) => toast(String(cause)));
+      },
+    });
+  }, [ask, clear, t, toast]);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     ipc
-      .onRequestClear(() => {
-        setConfirmClear(true);
-      })
+      .onRequestClear(askClear)
       .then((fn) => {
         if (disposed) fn();
         else unlisten = fn;
@@ -130,7 +141,7 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [askClear]);
 
   useEffect(() => {
     if (search === query) return;
@@ -166,9 +177,6 @@ export default function App() {
   const deleteCurrent = () => {
     if (selected) void run(() => remove(selected.id), t('deleted'));
   };
-  const clearAll = () => {
-    setConfirmClear(true);
-  };
   const minimize = () => {
     void getCurrentWindow()
       .minimize()
@@ -198,6 +206,14 @@ export default function App() {
       const target = event.target as HTMLElement | null;
       const inInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
       const meta = event.metaKey || event.ctrlKey;
+
+      if (confirm) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          answer(false);
+        }
+        return;
+      }
 
       if (settingsOpen) {
         if (event.key === 'Escape') {
@@ -335,6 +351,8 @@ export default function App() {
     search,
     previewItem,
     settingsOpen,
+    confirm,
+    answer,
     tab,
     copy,
     paste,
@@ -379,7 +397,7 @@ export default function App() {
           onFavorite={favoriteCurrent}
           onTransfer={openTransferWindow}
           onSettings={() => setSettingsOpen(true)}
-          onClear={clearAll}
+          onClear={askClear}
         />
         <div className={`status-float ${paused ? 'paused' : ''}`}>
           {paused ? t('paused') : t('monitoring')} · {t('totalCount', { n: totalCount })}
@@ -389,14 +407,11 @@ export default function App() {
       {previewItem && (
         <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
       )}
-      {confirmClear && (
+      {confirm && (
         <ConfirmDialog
-          message={t('clearConfirm')}
-          onCancel={() => setConfirmClear(false)}
-          onConfirm={() => {
-            setConfirmClear(false);
-            void run(clear, t('historyCleared'));
-          }}
+          message={confirm.message}
+          onCancel={() => answer(false)}
+          onConfirm={() => answer(true)}
         />
       )}
       <Toast />
