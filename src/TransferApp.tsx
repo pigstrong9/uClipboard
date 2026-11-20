@@ -91,6 +91,7 @@ export default function TransferApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [copying, setCopying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useUi((state) => state.toast);
   const initSettings = useSettings((state) => state.init);
@@ -136,12 +137,15 @@ export default function TransferApp() {
   }, [items, search]);
 
   const copyAll = async () => {
-    if (!items.length) return;
+    if (!items.length || copying) return;
+    setCopying(true);
     try {
       const count = await ipc.copyTransfer();
       toast(t('copiedCount', { n: count }));
     } catch (error) {
       toast(String(error));
+    } finally {
+      setCopying(false);
     }
   };
 
@@ -191,9 +195,9 @@ export default function TransferApp() {
         <button
           type="button"
           className="icon-btn"
-          title={t('copyAll')}
+          title={copying ? t('copying') : t('copyAll')}
           onClick={copyAll}
-          disabled={!items.length}
+          disabled={!items.length || copying}
         >
           <Icon name="copy" />
         </button>
@@ -219,6 +223,8 @@ export default function TransferApp() {
           <Icon name="close" />
         </button>
       </div>
+
+      {copying && <div className="transfer-progress">{t('copying')}</div>}
 
       {searchOpen && (
         <div className="transfer-search">
