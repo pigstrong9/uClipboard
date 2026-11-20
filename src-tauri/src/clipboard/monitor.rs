@@ -1,28 +1,29 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::media;
 use crate::models::{ClipKind, NewItem};
+use crate::platform;
+use crate::settings::Settings;
+use crate::state::Suppression;
 use crate::storage::Store;
 
 use super::hash::{hash_bytes, hash_files};
 use super::source::{ClipboardSource, RawCapture, SystemClipboard};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
-const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
-const MIN_TEXT_CHARS: usize = 3;
+const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub struct PreparedItem {
     pub item: NewItem,
 }
 
-pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
+pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Option<PreparedItem> {
     match capture.kind {
         ClipKind::Files => {
             let mut files = capture.files;
@@ -52,7 +53,7 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
         }
         ClipKind::Image => {
             let png = capture.image_png?;
-            if png.is_empty() || png.len() > MAX_IMAGE_BYTES {
+            if png.is_empty() || png.len() > settings.max_image_bytes {
                 return None;
             }
             let hash = hash_bytes(&png);
@@ -73,7 +74,9 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
         }
         ClipKind::Text => {
             let text = capture.text?;
-            if text.chars().count() < MIN_TEXT_CHARS || text.len() > MAX_TEXT_BYTES {
+            if text.chars().count() < settings.min_text_length
+                || text.len() > settings.max_text_bytes
+            {
                 return None;
             }
             let preview = text
@@ -102,47 +105,130 @@ pub fn prepare(capture: RawCapture, media_dir: &Path) -> Option<PreparedItem> {
     }
 }
 
+fn raw_hash(capture: &RawCapture) -> Option<String> {
+    match capture.kind {
+        ClipKind::Text => capture
+            .text
+            .as_ref()
+            .map(|text| hash_bytes(text.as_bytes())),
+        ClipKind::Image => capture.image_png.as_ref().map(|png| hash_bytes(png)),
+        ClipKind::Files => {
+            if capture.files.is_empty() {
+                None
+            } else {
+                Some(hash_files(&capture.files))
+            }
+        }
+    }
+}
+
+fn prune_and_cleanup(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Settings) {
+    let live = match store.lock() {
+        Ok(store) => {
+            let _ = store.prune(settings.history_limit, settings.retention_days);
+            store.image_paths().unwrap_or_default()
+        }
+        Err(_) => return,
+    };
+    media::cleanup_orphans(media_dir, &live);
+}
+
 pub fn spawn_monitor(
     app: AppHandle,
     store: Arc<Mutex<Store>>,
-    suppress: Arc<Mutex<Option<String>>>,
+    settings: Arc<Mutex<Settings>>,
+    suppress: Arc<Mutex<Suppression>>,
     media_dir: PathBuf,
 ) {
     thread::spawn(move || {
         let source = SystemClipboard;
         let mut last_hash: Option<String> = None;
+        let mut last_prune = Instant::now();
+        let mut was_paused = false;
+        let mut skip_next = false;
 
         loop {
             thread::sleep(POLL_INTERVAL);
 
+            if last_prune.elapsed() >= PRUNE_INTERVAL {
+                let snapshot = settings
+                    .lock()
+                    .map(|settings| settings.clone())
+                    .unwrap_or_default();
+                prune_and_cleanup(&store, &media_dir, &snapshot);
+                last_prune = Instant::now();
+            }
+
+            let snapshot = match settings.lock() {
+                Ok(settings) => settings.clone(),
+                Err(_) => continue,
+            };
+            if snapshot.monitor_paused {
+                was_paused = true;
+                continue;
+            }
+            if was_paused {
+                was_paused = false;
+                skip_next = true;
+            }
+
             let Some(capture) = source.read() else {
                 continue;
             };
-            let Some(prepared) = prepare(capture, &media_dir) else {
+            let Some(hash) = raw_hash(&capture) else {
                 continue;
             };
-            let hash = prepared.item.hash.clone();
 
             if last_hash.as_deref() == Some(hash.as_str()) {
                 continue;
             }
+            if skip_next {
+                skip_next = false;
+                last_hash = Some(hash);
+                continue;
+            }
 
-            {
-                let mut guard = suppress.lock().unwrap();
-                if guard.as_deref() == Some(hash.as_str()) {
-                    *guard = None;
+            if source.is_private() || !snapshot.allows(capture.kind) {
+                last_hash = Some(hash);
+                continue;
+            }
+
+            let foreground = platform::foreground_app_name();
+            if let Some(app) = foreground.as_deref() {
+                if snapshot.ignores_app(app) {
                     last_hash = Some(hash);
                     continue;
                 }
             }
 
-            let result = store.lock().unwrap().insert(prepared.item);
+            let Some(mut prepared) = prepare(capture, &media_dir, &snapshot) else {
+                last_hash = Some(hash);
+                continue;
+            };
+            prepared.item.source_app = foreground;
+            let hash = prepared.item.hash.clone();
+
+            {
+                let mut guard = match suppress.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => continue,
+                };
+                if guard.should_skip() {
+                    last_hash = Some(hash);
+                    continue;
+                }
+            }
+
+            let result = store.lock().map(|store| store.insert(prepared.item));
             match result {
-                Ok(_) => {
+                Ok(Ok(_)) => {
                     last_hash = Some(hash);
                     let _ = app.emit("clipboard-changed", ());
+                    prune_and_cleanup(&store, &media_dir, &snapshot);
+                    last_prune = Instant::now();
                 }
-                Err(error) => eprintln!("clipboard insert failed: {error}"),
+                Ok(Err(error)) => eprintln!("clipboard insert failed: {error}"),
+                Err(_) => eprintln!("clipboard store lock failed"),
             }
         }
     });
@@ -164,7 +250,11 @@ mod tests {
 
     #[test]
     fn skips_short_text() {
-        let prepared = prepare(text_capture("ab", None), Path::new("."));
+        let prepared = prepare(
+            text_capture("ab", None),
+            Path::new("."),
+            &Settings::default(),
+        );
         assert!(prepared.is_none());
     }
 
@@ -173,6 +263,7 @@ mod tests {
         let prepared = prepare(
             text_capture("hello   clipboard world", Some("<b>hello</b>")),
             Path::new("."),
+            &Settings::default(),
         )
         .expect("text should be prepared");
         assert_eq!(prepared.item.kind, ClipKind::Text);
@@ -193,17 +284,25 @@ mod tests {
                 text: None,
                 html: None,
                 image_png: None,
-                files: vec![
-                    "C:/tmp/b.txt".to_string(),
-                    "C:/tmp/a.txt".to_string(),
-                ],
+                files: vec!["C:/tmp/b.txt".to_string(), "C:/tmp/a.txt".to_string()],
             },
             Path::new("."),
+            &Settings::default(),
         )
         .expect("files should be prepared");
         assert_eq!(prepared.item.kind, ClipKind::Files);
         assert_eq!(prepared.item.size, 2);
         assert_eq!(prepared.item.content, "[\"C:/tmp/a.txt\",\"C:/tmp/b.txt\"]");
         assert_eq!(prepared.item.preview, "a.txt 等 2 个文件");
+    }
+
+    #[test]
+    fn respects_record_switches() {
+        let settings = Settings {
+            record_text: false,
+            ..Settings::default()
+        };
+        assert!(!settings.allows(ClipKind::Text));
+        assert!(settings.allows(ClipKind::Image));
     }
 }

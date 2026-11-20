@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { baseName, relativeTime } from '../lib/format';
 import { Icon } from '../lib/icons';
+import { useI18n } from '../lib/useI18n';
 import { parseExtra, parseFiles, type ClipItem } from '../lib/types';
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
   onCopy: (id: string) => void;
   onPaste: (id: string) => void;
   onFavorite: (id: string) => void;
+  onPin: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
@@ -25,18 +27,34 @@ export function ClipboardList({
   onCopy,
   onPaste,
   onFavorite,
+  onPin,
   onDelete,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [menu, setMenu] = useState<{ x: number; y: number; item: ClipItem } | null>(null);
+  const { t } = useI18n();
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('blur', close);
+    };
+  }, [menu]);
 
   if (loading && items.length === 0) {
     return (
-      <section className="list" tabIndex={0} aria-label="剪贴板历史">
+      <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
         <div className="empty">
           <div className="empty-icon">
             <Icon name="clipboard" />
           </div>
-          <p>加载中…</p>
+          <p>{t('loading')}</p>
         </div>
       </section>
     );
@@ -44,13 +62,13 @@ export function ClipboardList({
 
   if (items.length === 0) {
     return (
-      <section className="list" tabIndex={0} aria-label="剪贴板历史">
+      <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
         <div className="empty">
           <div className="empty-icon">
             <Icon name="clipboard" />
           </div>
-          <p>还没有剪贴板记录</p>
-          <span>复制任意内容后会自动出现在这里</span>
+          <p>{t('emptyTitle')}</p>
+          <span>{t('emptyHint')}</span>
         </div>
       </section>
     );
@@ -66,16 +84,16 @@ export function ClipboardList({
   };
 
   return (
-    <section className="list" tabIndex={0} aria-label="剪贴板历史">
+    <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
       {items.map((item, index) => {
         const extra = parseExtra(item.extra);
         const files = item.kind === 'files' ? parseFiles(item.content) : [];
         const meta =
           item.kind === 'text'
-            ? `${item.size} 字符`
+            ? t('chars', { n: item.size })
             : item.kind === 'image'
               ? `${extra.width ?? 0} × ${extra.height ?? 0}`
-              : `${extra.count ?? files.length} 个文件`;
+              : t('filesCount', { n: extra.count ?? files.length });
         const isExpanded = expanded.has(item.id);
 
         return (
@@ -87,6 +105,14 @@ export function ClipboardList({
             data-id={item.id}
             onClick={() => onSelect(item.id)}
             onDoubleClick={() => onPaste(item.id)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenu({
+                x: Math.min(event.clientX, window.innerWidth - 170),
+                y: Math.min(event.clientY, window.innerHeight - 210),
+                item,
+              });
+            }}
           >
             <div className="item-main">
               {item.kind === 'text' && (
@@ -103,7 +129,7 @@ export function ClipboardList({
                         toggleExpanded(item.id);
                       }}
                     >
-                      {isExpanded ? '收起' : '展开'}
+                      {isExpanded ? t('collapse') : t('expand')}
                     </button>
                   )}
                 </>
@@ -111,9 +137,9 @@ export function ClipboardList({
               {item.kind === 'image' && (
                 <div className="image-preview">
                   {item.thumb_data_url ? (
-                    <img src={item.thumb_data_url} alt="剪贴板图片" />
+                    <img src={item.thumb_data_url} alt={t('previewImageAlt')} />
                   ) : (
-                    <div className="thumb-placeholder">图片</div>
+                    <div className="thumb-placeholder">{t('image')}</div>
                   )}
                 </div>
               )}
@@ -131,7 +157,12 @@ export function ClipboardList({
               )}
             </div>
             <div className="item-meta">
-              <span className="item-time">{relativeTime(item.updated_at)}</span>
+              <span className="item-time">{relativeTime(item.updated_at, t)}</span>
+              {item.source_app && (
+                <span className="item-source" title={t('sourceApp')}>
+                  {item.source_app}
+                </span>
+              )}
               <span className="item-size">{meta}</span>
               {index < 9 && <span className="item-index">{index + 1}</span>}
             </div>
@@ -139,7 +170,7 @@ export function ClipboardList({
               <button
                 type="button"
                 className="icon-btn"
-                title="复制"
+                title={t('copy')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCopy(item.id);
@@ -150,7 +181,7 @@ export function ClipboardList({
               <button
                 type="button"
                 className="icon-btn"
-                title="收藏"
+                title={t('favorite')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onFavorite(item.id);
@@ -161,7 +192,7 @@ export function ClipboardList({
               <button
                 type="button"
                 className="icon-btn"
-                title="删除"
+                title={t('delete')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onDelete(item.id);
@@ -178,6 +209,62 @@ export function ClipboardList({
           </article>
         );
       })}
+      {menu && (
+        <div
+          className="context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null);
+              onPaste(menu.item.id);
+            }}
+          >
+            {t('paste')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null);
+              onCopy(menu.item.id);
+            }}
+          >
+            {t('copy')}
+          </button>
+          <hr />
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null);
+              onFavorite(menu.item.id);
+            }}
+          >
+            {menu.item.favorite ? t('unfavorite') : t('favorite')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null);
+              onPin(menu.item.id);
+            }}
+          >
+            {menu.item.pinned ? t('unpin') : t('pin')}
+          </button>
+          <hr />
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setMenu(null);
+              onDelete(menu.item.id);
+            }}
+          >
+            {t('delete')}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

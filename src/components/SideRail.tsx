@@ -1,4 +1,5 @@
 import { Icon } from '../lib/icons';
+import { useI18n } from '../lib/useI18n';
 
 interface Props {
   hasSelection: boolean;
@@ -19,13 +20,14 @@ export function SideRail({
   onSettings,
   onClear,
 }: Props) {
+  const { t } = useI18n();
   return (
-    <aside className="side-rail" aria-label="快捷操作">
+    <aside className="side-rail" aria-label={t('quickActions')}>
       <div className="quick-rail">
         <button
           type="button"
           className="quick-btn"
-          title="复制"
+          title={t('copy')}
           onClick={onCopy}
           disabled={!hasSelection}
         >
@@ -34,7 +36,7 @@ export function SideRail({
         <button
           type="button"
           className="quick-btn"
-          title="收藏"
+          title={t('favorite')}
           onClick={onFavorite}
           disabled={!hasSelection}
         >
@@ -43,7 +45,7 @@ export function SideRail({
         <button
           type="button"
           className="quick-btn"
-          title="多选 / 临时中转"
+          title={t('selectTransfer')}
           data-count={selectionCount > 0 ? selectionCount : undefined}
           onClick={onTransfer}
         >
@@ -51,10 +53,10 @@ export function SideRail({
         </button>
       </div>
       <div className="utility-rail">
-        <button type="button" className="icon-btn rail-btn" title="设置（M3）" onClick={onSettings}>
+        <button type="button" className="icon-btn rail-btn" title={t('settings')} onClick={onSettings}>
           <Icon name="gear" />
         </button>
-        <button type="button" className="icon-btn rail-btn" title="清空历史" onClick={onClear}>
+        <button type="button" className="icon-btn rail-btn" title={t('clearHistory')} onClick={onClear}>
           <Icon name="trash" />
         </button>
       </div>

@@ -4,7 +4,10 @@ import { Toast } from './components/Toast';
 import { baseName } from './lib/format';
 import { Icon } from './lib/icons';
 import * as ipc from './lib/ipc';
+import { useI18n } from './lib/useI18n';
+import { useTheme } from './lib/useTheme';
 import { parseExtra, parseFiles, type ClipItem } from './lib/types';
+import { useSettings } from './stores/settings';
 import { useUi } from './stores/ui';
 
 function TransferCard({
@@ -20,19 +23,20 @@ function TransferCard({
   onToggleExpand: (id: string) => void;
   onPaste: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const extra = parseExtra(item.extra);
   const files = item.kind === 'files' ? parseFiles(item.content) : [];
   const meta =
     item.kind === 'text'
-      ? `${item.size} 字符`
+      ? t('chars', { n: item.size })
       : item.kind === 'image'
         ? `${extra.width ?? 0} × ${extra.height ?? 0}`
-        : `${extra.count ?? files.length} 个文件`;
+        : t('filesCount', { n: extra.count ?? files.length });
 
   return (
     <article
       className={`item transfer-card ${index === 0 ? 'active' : ''}`}
-      title="双击粘贴"
+      title={t('doubleClickPaste')}
       onDoubleClick={() => onPaste(item.id)}
     >
       <div className="item-main">
@@ -45,7 +49,7 @@ function TransferCard({
                 className="expand-btn"
                 onClick={() => onToggleExpand(item.id)}
               >
-                {expanded ? '收起' : '展开'}
+                {expanded ? t('collapse') : t('expand')}
               </button>
             )}
           </>
@@ -53,9 +57,9 @@ function TransferCard({
         {item.kind === 'image' && (
           <div className="image-preview">
             {item.thumb_data_url ? (
-              <img src={item.thumb_data_url} alt="剪贴板图片" />
+              <img src={item.thumb_data_url} alt={t('previewImageAlt')} />
             ) : (
-              <div className="thumb-placeholder">图片</div>
+              <div className="thumb-placeholder">{t('image')}</div>
             )}
           </div>
         )}
@@ -73,7 +77,7 @@ function TransferCard({
         )}
       </div>
       <div className="item-meta">
-        <span className="transfer-source">临时中转</span>
+        <span className="transfer-source">{t('transferSource')}</span>
         <span className="item-size">{meta}</span>
         <span className="item-index">{index + 1}</span>
       </div>
@@ -89,6 +93,9 @@ export default function TransferApp() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useUi((state) => state.toast);
+  const initSettings = useSettings((state) => state.init);
+  const { t } = useI18n();
+  useTheme();
 
   const load = async () => {
     try {
@@ -102,6 +109,7 @@ export default function TransferApp() {
   };
 
   useEffect(() => {
+    void initSettings();
     void load();
     let unlisten: (() => void) | undefined;
     ipc
@@ -115,7 +123,7 @@ export default function TransferApp() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [initSettings]);
 
   useEffect(() => {
     if (searchOpen) inputRef.current?.focus();
@@ -131,7 +139,7 @@ export default function TransferApp() {
     if (!items.length) return;
     try {
       const count = await ipc.copyTransfer();
-      toast(`已复制 ${count} 条`);
+      toast(t('copiedCount', { n: count }));
     } catch (error) {
       toast(String(error));
     }
@@ -141,7 +149,7 @@ export default function TransferApp() {
     if (!items.length) return;
     try {
       const favorited = await ipc.favoriteTransfer();
-      toast(favorited ? '已收藏' : '已取消收藏');
+      toast(favorited ? t('favoriteAdded') : t('favoriteRemoved'));
       await load();
     } catch (error) {
       toast(String(error));
@@ -168,7 +176,7 @@ export default function TransferApp() {
   const pasteItem = async (id: string) => {
     try {
       await ipc.pasteTransferItem(id);
-      toast('已粘贴');
+      toast(t('pasted'));
     } catch (error) {
       toast(String(error));
     }
@@ -177,13 +185,13 @@ export default function TransferApp() {
   return (
     <div className="transfer-window">
       <div className="transfer-head" data-tauri-drag-region>
-        <span className="transfer-pin" title="置顶窗口">
+        <span className="transfer-pin" title={t('transferTitle')}>
           <Icon name="pin" />
         </span>
         <button
           type="button"
           className="icon-btn"
-          title="复制全部"
+          title={t('copyAll')}
           onClick={copyAll}
           disabled={!items.length}
         >
@@ -192,7 +200,7 @@ export default function TransferApp() {
         <button
           type="button"
           className="icon-btn"
-          title="收藏全部"
+          title={t('favoriteAll')}
           onClick={favoriteAll}
           disabled={!items.length}
         >
@@ -202,12 +210,12 @@ export default function TransferApp() {
         <button
           type="button"
           className="icon-btn"
-          title="搜索"
+          title={t('search')}
           onClick={() => setSearchOpen((value) => !value)}
         >
           <Icon name="search" />
         </button>
-        <button type="button" className="icon-btn" title="关闭" onClick={closeWindow}>
+        <button type="button" className="icon-btn" title={t('close')} onClick={closeWindow}>
           <Icon name="close" />
         </button>
       </div>
@@ -218,14 +226,14 @@ export default function TransferApp() {
             ref={inputRef}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="在中转内容中搜索…"
+            placeholder={t('searchPlaceholderTransfer')}
           />
         </div>
       )}
 
       <div className="transfer-body">
         {loading && items.length === 0 ? (
-          <div className="transfer-empty">加载中…</div>
+          <div className="transfer-empty">{t('loading')}</div>
         ) : filtered.length ? (
           filtered.map((item, index) => (
             <TransferCard
@@ -239,9 +247,7 @@ export default function TransferApp() {
           ))
         ) : (
           <div className="transfer-empty">
-            {items.length
-              ? '没有匹配的内容'
-              : '先在主窗口选择条目，再点击中转按钮'}
+            {items.length ? t('noMatch') : t('transferEmpty')}
           </div>
         )}
       </div>

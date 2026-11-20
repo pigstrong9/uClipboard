@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import * as ipc from '../lib/ipc';
 import { Icon } from '../lib/icons';
+import { useI18n } from '../lib/useI18n';
 import { parseExtra, parseFiles, type ClipItem } from '../lib/types';
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
 export function PreviewModal({ item, onClose }: Props) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const extra = parseExtra(item.extra);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (item.kind !== 'image') return;
@@ -34,7 +36,7 @@ export function PreviewModal({ item, onClose }: Props) {
           <figure className="preview-image">
             <img
               src={imageUrl ?? item.thumb_data_url ?? ''}
-              alt="剪贴板图片"
+              alt={t('previewImageAlt')}
             />
             <figcaption>
               {extra.width ?? 0} × {extra.height ?? 0}
@@ -48,12 +50,12 @@ export function PreviewModal({ item, onClose }: Props) {
         )}
         {item.kind === 'files' && (
           <div className="preview-text">
-            <h3>{parseFiles(item.content).length} 个文件</h3>
+            <h3>{t('filesCount', { n: parseFiles(item.content).length })}</h3>
             <pre>{parseFiles(item.content).join('\n')}</pre>
           </div>
         )}
       </div>
-      <button type="button" className="icon-btn preview-close" title="关闭" onClick={onClose}>
+      <button type="button" className="icon-btn preview-close" title={t('close')} onClick={onClose}>
         <Icon name="close" />
       </button>
     </div>
