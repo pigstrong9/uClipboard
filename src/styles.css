@@ -1104,6 +1104,30 @@ body[data-window="transfer"] {
   color: #ef4444;
 }
 
+.confirm-dialog {
+  width: min(360px, 84vw);
+  padding: 20px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: grid;
+  gap: 16px;
+}
+
+.confirm-message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .settings-chip {
   border: 1px solid var(--border);
   border-radius: 999px;

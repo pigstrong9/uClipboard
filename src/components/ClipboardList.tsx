@@ -120,7 +120,7 @@ export function ClipboardList({
                   <div className={`text-preview ${isExpanded ? 'expanded' : ''}`}>
                     {item.content}
                   </div>
-                  {item.content.length > 180 && (
+                  {item.size > 180 && (
                     <button
                       type="button"
                       className="expand-btn"

@@ -187,11 +187,22 @@ pub fn list_items(
     query: String,
 ) -> Result<Vec<ClipItem>, String> {
     let app_state = state.inner();
+    let limit = app_state
+        .settings
+        .lock()
+        .map(|settings| {
+            if settings.history_limit == 0 {
+                -1
+            } else {
+                settings.history_limit as i64
+            }
+        })
+        .unwrap_or(500);
     let items = app_state
         .store
         .lock()
         .map_err(|e| e.to_string())?
-        .list(&tab, &query)
+        .list(&tab, &query, limit)
         .map_err(|e| e.to_string())?;
     Ok(items
         .into_iter()
@@ -341,10 +352,18 @@ pub async fn update_settings(
 #[tauri::command]
 pub fn toggle_monitoring(app: tauri::AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
-    let mut updated = state.settings.lock().map_err(|e| e.to_string())?.clone();
-    updated.monitor_paused = !updated.monitor_paused;
-    settings::save(&state.config_path, &updated)?;
-    *state.settings.lock().map_err(|e| e.to_string())? = updated.clone();
+    let (updated, previous_paused) = {
+        let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+        let previous_paused = guard.monitor_paused;
+        guard.monitor_paused = !guard.monitor_paused;
+        (guard.clone(), previous_paused)
+    };
+    if settings::save(&state.config_path, &updated).is_err() {
+        if let Ok(mut guard) = state.settings.lock() {
+            guard.monitor_paused = previous_paused;
+        }
+        return Err("保存设置失败".to_string());
+    }
     let _ = app.emit("settings-changed", ());
     Ok(updated.monitor_paused)
 }
@@ -431,15 +450,22 @@ pub async fn paste_item(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    #[cfg(target_os = "windows")]
-    let mut enigo = ();
-    #[cfg(not(target_os = "windows"))]
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+    let task_window = window.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        let mut enigo = ();
+        #[cfg(not(target_os = "windows"))]
+        let mut enigo =
+            Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
-    window.hide().map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(200));
+        task_window.hide().map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        send_paste_shortcut(&mut enigo)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    if let Err(error) = send_paste_shortcut(&mut enigo) {
+    if let Err(error) = result {
         let _ = window.show();
         let _ = window.set_focus();
         return Err(format!("自动粘贴失败: {error}"));
@@ -460,42 +486,57 @@ pub async fn paste_transfer_item(
     let transfer = app
         .get_webview_window("transfer")
         .ok_or_else(|| "中转窗口不存在".to_string())?;
-    let main = app.get_webview_window("main");
-    #[cfg(target_os = "windows")]
-    let mut enigo = ();
-    #[cfg(not(target_os = "windows"))]
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        let target = app_state.target_hwnd.lock().ok().and_then(|guard| *guard);
-        if let Some(hwnd) = target {
-            if crate::platform::focus_window(hwnd) {
-                std::thread::sleep(std::time::Duration::from_millis(160));
-                if send_paste_shortcut(&mut enigo).is_ok() {
-                    let _ = app.emit("clipboard-changed", ());
-                    return Ok(updated);
+    let task_app = app.clone();
+    let task_transfer = transfer.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        let mut enigo = ();
+        #[cfg(not(target_os = "windows"))]
+        let mut enigo =
+            Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let target = task_app
+                .state::<AppState>()
+                .target_hwnd
+                .lock()
+                .ok()
+                .and_then(|guard| *guard);
+            if let Some(hwnd) = target {
+                if crate::platform::focus_window(hwnd) {
+                    std::thread::sleep(std::time::Duration::from_millis(160));
+                    if send_paste_shortcut(&mut enigo).is_ok() {
+                        return Ok(());
+                    }
                 }
             }
         }
-    }
 
-    transfer.hide().map_err(|e| e.to_string())?;
-    if let Some(main) = &main {
-        if main.is_visible().unwrap_or(false) {
-            let _ = main.hide();
+        task_transfer.hide().map_err(|e| e.to_string())?;
+        if let Some(main) = task_app.get_webview_window("main") {
+            if main.is_visible().unwrap_or(false) {
+                let _ = main.hide();
+            }
         }
-    }
-    std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(200));
 
-    if let Err(error) = send_paste_shortcut(&mut enigo) {
+        send_paste_shortcut(&mut enigo)?;
+
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        task_transfer.show().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Err(error) = result {
         let _ = transfer.show();
         let _ = transfer.set_focus();
         return Err(format!("自动粘贴失败: {error}"));
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(120));
-    transfer.show().map_err(|e| e.to_string())?;
     let _ = app.emit("clipboard-changed", ());
     Ok(updated)
 }
@@ -687,9 +728,7 @@ pub fn favorite_count(state: State<'_, AppState>) -> Result<i64, String> {
 }
 
 #[tauri::command]
-pub fn image_data_url(state: State<'_, AppState>, id: String) -> Result<String, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
+pub fn image_file_path(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let app_state = state.inner();
     let item = app_state
         .store
@@ -700,7 +739,9 @@ pub fn image_data_url(state: State<'_, AppState>, id: String) -> Result<String, 
     if item.kind != ClipKind::Image {
         return Err("不是图片条目".to_string());
     }
-    let bytes =
-        std::fs::read(app_state.media_dir.join(&item.content)).map_err(|e| e.to_string())?;
-    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+    Ok(app_state
+        .media_dir
+        .join(&item.content)
+        .to_string_lossy()
+        .to_string())
 }

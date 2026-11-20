@@ -96,7 +96,7 @@ impl Store {
         )
     }
 
-    pub fn list(&self, tab: &str, query: &str) -> rusqlite::Result<Vec<ClipItem>> {
+    pub fn list(&self, tab: &str, query: &str, limit: i64) -> rusqlite::Result<Vec<ClipItem>> {
         let pattern = like_pattern(query);
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, extra, preview, size, source_app, favorite, pinned, copy_count, created_at, updated_at
@@ -106,9 +106,9 @@ impl Store {
                AND (?1 != 'favorite' OR favorite = 1)
                AND (?2 = '' OR content LIKE ?3 ESCAPE '\\' OR preview LIKE ?3 ESCAPE '\\')
              ORDER BY (CASE WHEN ?1 = 'favorite' THEN 0 ELSE pinned END) DESC, updated_at DESC
-             LIMIT 500",
+             LIMIT ?4",
         )?;
-        let rows = stmt.query_map(params![tab, query, pattern], row_to_item)?;
+        let rows = stmt.query_map(params![tab, query, pattern, limit], row_to_item)?;
         rows.collect()
     }
 
@@ -279,7 +279,7 @@ mod tests {
         let first = store.insert(new_text("first", "h1")).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         let second = store.insert(new_text("second", "h2")).unwrap();
-        let items = store.list("all", "").unwrap();
+        let items = store.list("all", "", 500).unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, second.id);
         assert_eq!(items[1].id, first.id);
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(again.id, first.id);
         assert_eq!(again.copy_count, 2);
         assert_eq!(store.count().unwrap(), 2);
-        assert_eq!(store.list("all", "").unwrap()[0].id, first.id);
+        assert_eq!(store.list("all", "", 500).unwrap()[0].id, first.id);
     }
 
     #[test]
@@ -310,12 +310,12 @@ mod tests {
         store.toggle_favorite(&b.id).unwrap();
         store.toggle_pin(&a.id).unwrap();
 
-        let all = store.list("all", "").unwrap();
+        let all = store.list("all", "", 500).unwrap();
         assert_eq!(all[0].id, a.id);
-        let favorites = store.list("favorite", "").unwrap();
+        let favorites = store.list("favorite", "", 500).unwrap();
         assert_eq!(favorites.len(), 1);
         assert_eq!(favorites[0].id, b.id);
-        assert_eq!(store.list("text", "").unwrap()[0].id, a.id);
+        assert_eq!(store.list("text", "", 500).unwrap()[0].id, a.id);
         assert_eq!(c.kind, ClipKind::Text);
     }
 
@@ -326,11 +326,11 @@ mod tests {
         store
             .insert(new_kind(ClipKind::Image, "mock.png", "h2"))
             .unwrap();
-        let found = store.list("all", "hello").unwrap();
+        let found = store.list("all", "hello", 500).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].content, "hello world");
-        assert_eq!(store.list("image", "").unwrap().len(), 1);
-        assert_eq!(store.list("text", "").unwrap().len(), 1);
+        assert_eq!(store.list("image", "", 500).unwrap().len(), 1);
+        assert_eq!(store.list("text", "", 500).unwrap().len(), 1);
     }
 
     #[test]

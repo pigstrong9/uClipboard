@@ -133,6 +133,15 @@ fn prune_and_cleanup(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Set
     media::cleanup_orphans(media_dir, &live);
 }
 
+fn prune_after_insert(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Settings) {
+    let Ok(store) = store.lock() else {
+        return;
+    };
+    if let Ok(images) = store.prune(settings.history_limit, settings.retention_days) {
+        media::remove_media_files(media_dir, &images);
+    }
+}
+
 pub fn spawn_monitor(
     app: AppHandle,
     store: Arc<Mutex<Store>>,
@@ -143,6 +152,7 @@ pub fn spawn_monitor(
     thread::spawn(move || {
         let source = SystemClipboard;
         let mut last_hash: Option<String> = None;
+        let mut last_sequence: Option<u32> = None;
         let mut last_prune = Instant::now();
         let mut was_paused = false;
         let mut resume_sequence: Option<u32> = None;
@@ -172,6 +182,16 @@ pub fn spawn_monitor(
                 was_paused = false;
                 resume_sequence = platform::clipboard_sequence();
                 skip_next = resume_sequence.is_none();
+            }
+
+            // Skip read/decode entirely while the clipboard is unchanged; otherwise
+            // an image sitting in the clipboard would be re-encoded every poll.
+            let sequence = platform::clipboard_sequence();
+            if let Some(sequence) = sequence {
+                if last_sequence == Some(sequence) {
+                    continue;
+                }
+                last_sequence = Some(sequence);
             }
 
             let Some(capture) = source.read() else {
@@ -234,7 +254,7 @@ pub fn spawn_monitor(
                 Ok(Ok(_)) => {
                     last_hash = Some(hash);
                     let _ = app.emit("clipboard-changed", ());
-                    prune_and_cleanup(&store, &media_dir, &snapshot);
+                    prune_after_insert(&store, &media_dir, &snapshot);
                     last_prune = Instant::now();
                 }
                 Ok(Err(error)) => eprintln!("clipboard insert failed: {error}"),

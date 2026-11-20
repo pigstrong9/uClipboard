@@ -133,7 +133,11 @@ export default function TransferApp() {
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return items;
-    return items.filter((item) => item.content.toLowerCase().includes(keyword));
+    return items.filter(
+      (item) =>
+        item.content.toLowerCase().includes(keyword) ||
+        item.preview.toLowerCase().includes(keyword),
+    );
   }, [items, search]);
 
   const copyAll = async () => {
