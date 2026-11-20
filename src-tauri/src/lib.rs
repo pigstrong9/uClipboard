@@ -270,7 +270,7 @@ pub fn run() {
             commands::close_transfer,
             commands::stats,
             commands::favorite_count,
-            commands::image_data_url,
+            commands::image_file_path,
             commands::get_settings,
             commands::update_settings,
             commands::toggle_monitoring,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 
+import { ConfirmDialog } from './ConfirmDialog';
 import * as ipc from '../lib/ipc';
 import { Icon } from '../lib/icons';
 import { useI18n } from '../lib/useI18n';
@@ -39,6 +40,7 @@ export function SettingsView({ onClose }: Props) {
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
@@ -121,7 +123,6 @@ export function SettingsView({ onClose }: Props) {
   };
 
   const clearAll = async () => {
-    if (!window.confirm(t('confirmClearAllData'))) return;
     try {
       await ipc.clearItems();
       useClipboard.setState({ selectedId: null, selectedIds: [] });
@@ -366,7 +367,11 @@ export function SettingsView({ onClose }: Props) {
             </div>
             <p className="settings-note settings-note-row">{t('privacyNote')}</p>
             <div className="settings-inline">
-              <button type="button" className="settings-button danger" onClick={clearAll}>
+              <button
+                type="button"
+                className="settings-button danger"
+                onClick={() => setConfirmClear(true)}
+              >
                 {t('clearAllData')}
               </button>
             </div>
@@ -421,6 +426,16 @@ export function SettingsView({ onClose }: Props) {
           </div>
         )}
       </div>
+      {confirmClear && (
+        <ConfirmDialog
+          message={t('confirmClearAllData')}
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => {
+            setConfirmClear(false);
+            void clearAll();
+          }}
+        />
+      )}
     </section>
   );
 }

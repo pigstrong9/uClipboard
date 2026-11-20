@@ -44,6 +44,18 @@ pub fn thumb_data_url(media_dir: &Path, rel_path: &str) -> Option<String> {
     Some(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)))
 }
 
+pub fn remove_media_files(media_dir: &Path, rel_paths: &[String]) {
+    let images = media_dir.join("images");
+    for rel in rel_paths {
+        let Some(stem) = Path::new(rel).file_stem() else {
+            continue;
+        };
+        let stem = stem.to_string_lossy();
+        let _ = std::fs::remove_file(images.join(format!("{stem}.png")));
+        let _ = std::fs::remove_file(images.join(format!("{stem}_thumb.jpg")));
+    }
+}
+
 pub fn cleanup_orphans(media_dir: &Path, live_paths: &[String]) {
     let images = media_dir.join("images");
     let Ok(entries) = std::fs::read_dir(&images) else {

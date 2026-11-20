@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { ClipboardList } from './components/ClipboardList';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { PreviewModal } from './components/PreviewModal';
 import { SettingsView } from './components/SettingsView';
 import { SideRail } from './components/SideRail';
@@ -53,6 +54,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ClipItem | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
@@ -117,10 +119,7 @@ export default function App() {
     let disposed = false;
     ipc
       .onRequestClear(() => {
-        if (!window.confirm(t('clearConfirm'))) return;
-        void clear()
-          .then(() => toast(t('historyCleared')))
-          .catch((cause) => toast(String(cause)));
+        setConfirmClear(true);
       })
       .then((fn) => {
         if (disposed) fn();
@@ -131,7 +130,7 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [clear, toast, t]);
+  }, []);
 
   useEffect(() => {
     if (search === query) return;
@@ -168,7 +167,7 @@ export default function App() {
     if (selected) void run(() => remove(selected.id), t('deleted'));
   };
   const clearAll = () => {
-    if (window.confirm(t('clearConfirm'))) void run(clear, t('historyCleared'));
+    setConfirmClear(true);
   };
   const minimize = () => {
     void getCurrentWindow()
@@ -389,6 +388,16 @@ export default function App() {
       {settingsOpen && <SettingsView onClose={() => setSettingsOpen(false)} />}
       {previewItem && (
         <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
+      )}
+      {confirmClear && (
+        <ConfirmDialog
+          message={t('clearConfirm')}
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => {
+            setConfirmClear(false);
+            void run(clear, t('historyCleared'));
+          }}
+        />
       )}
       <Toast />
     </main>

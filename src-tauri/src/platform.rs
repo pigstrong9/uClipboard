@@ -304,11 +304,11 @@ pub fn send_paste_keys() -> bool {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
         let v_press = [key(VK_V, false), key(VK_V, true)];
-        if SendInput(2, v_press.as_ptr(), size) != 2 {
-            return false;
-        }
+        let v_ok = SendInput(2, v_press.as_ptr(), size) == 2;
         std::thread::sleep(std::time::Duration::from_millis(20));
+        // Always release Ctrl, otherwise the target app keeps the modifier stuck.
         let control_up = [key(VK_CONTROL, true)];
-        SendInput(1, control_up.as_ptr(), size) == 1
+        let released = SendInput(1, control_up.as_ptr(), size) == 1;
+        v_ok && released
     }
 }

@@ -1,3 +1,4 @@
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
 import * as ipc from '../lib/ipc';
@@ -19,9 +20,9 @@ export function PreviewModal({ item, onClose }: Props) {
     if (item.kind !== 'image') return;
     let cancelled = false;
     ipc
-      .imageDataUrl(item.id)
-      .then((url) => {
-        if (!cancelled) setImageUrl(url);
+      .imageFilePath(item.id)
+      .then((path) => {
+        if (!cancelled) setImageUrl(convertFileSrc(path));
       })
       .catch(() => undefined);
     return () => {

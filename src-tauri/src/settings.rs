@@ -118,11 +118,19 @@ impl Settings {
 }
 
 pub fn load(path: &Path) -> Settings {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
-        .unwrap_or_default()
-        .normalized()
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return Settings::default().normalized(),
+    };
+    match serde_json::from_str::<Settings>(&raw) {
+        Ok(settings) => settings.normalized(),
+        Err(error) => {
+            eprintln!("config.json parse failed ({error}); backing up and resetting to defaults");
+            let backup = path.with_extension("json.bak");
+            let _ = std::fs::write(&backup, &raw);
+            Settings::default().normalized()
+        }
+    }
 }
 
 pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {

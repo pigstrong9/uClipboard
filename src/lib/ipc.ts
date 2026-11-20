@@ -43,8 +43,8 @@ export function favoriteCount() {
   return invoke<number>('favorite_count');
 }
 
-export function imageDataUrl(id: string) {
-  return invoke<string>('image_data_url', { id });
+export function imageFilePath(id: string) {
+  return invoke<string>('image_file_path', { id });
 }
 
 export function openTransfer(ids: string[]) {
