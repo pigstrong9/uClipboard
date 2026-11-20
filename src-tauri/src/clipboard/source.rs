@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use clipboard_rs::common::RustImage;
-use clipboard_rs::{Clipboard, ClipboardContext, RustImageData};
+use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext, RustImageData};
 
 use crate::models::{ClipItem, ClipKind};
 
@@ -16,6 +16,7 @@ pub struct RawCapture {
 pub trait ClipboardSource: Send + Sync {
     fn read(&self) -> Option<RawCapture>;
     fn write(&self, item: &ClipItem, media_dir: &Path) -> bool;
+    fn write_merged(&self, text: Option<&str>, files: &[String]) -> bool;
 }
 
 pub struct SystemClipboard;
@@ -89,5 +90,24 @@ impl ClipboardSource for SystemClipboard {
                 ctx.set_image(image).is_ok()
             }
         }
+    }
+
+    fn write_merged(&self, text: Option<&str>, files: &[String]) -> bool {
+        let Ok(ctx) = ClipboardContext::new() else {
+            return false;
+        };
+        let mut contents = Vec::new();
+        if let Some(text) = text {
+            if !text.is_empty() {
+                contents.push(ClipboardContent::Text(text.to_string()));
+            }
+        }
+        if !files.is_empty() {
+            contents.push(ClipboardContent::Files(files.to_vec()));
+        }
+        if contents.is_empty() {
+            return false;
+        }
+        ctx.set(contents).is_ok()
     }
 }

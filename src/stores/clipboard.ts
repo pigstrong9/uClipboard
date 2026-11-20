@@ -10,12 +10,16 @@ interface ClipboardState {
   loading: boolean;
   error: string | null;
   selectedId: string | null;
+  selectedIds: string[];
   favoriteCount: number;
   totalCount: number;
   load: () => Promise<void>;
   setTab: (tab: TabKey) => void;
   setQuery: (query: string) => void;
   select: (id: string | null) => void;
+  toggleSelection: (id: string) => void;
+  clearSelection: () => void;
+  openTransfer: (ids: string[]) => Promise<void>;
   toggleFavorite: (id: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -34,6 +38,7 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
   loading: true,
   error: null,
   selectedId: null,
+  selectedIds: [],
   favoriteCount: 0,
   totalCount: 0,
 
@@ -69,6 +74,20 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
 
   select: (selectedId) => set({ selectedId }),
 
+  toggleSelection: (id) => {
+    set((state) => ({
+      selectedIds: state.selectedIds.includes(id)
+        ? state.selectedIds.filter((value) => value !== id)
+        : [...state.selectedIds, id],
+    }));
+  },
+
+  clearSelection: () => set({ selectedIds: [] }),
+
+  openTransfer: async (ids) => {
+    await ipc.openTransfer(ids);
+  },
+
   toggleFavorite: async (id) => {
     await ipc.toggleFavorite(id);
     await get().load();
@@ -81,7 +100,10 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
 
   remove: async (id) => {
     await ipc.deleteItem(id);
-    if (get().selectedId === id) set({ selectedId: null });
+    set((state) => ({
+      selectedIds: state.selectedIds.filter((value) => value !== id),
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    }));
     await get().load();
   },
 
@@ -97,7 +119,7 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
 
   clear: async () => {
     await ipc.clearItems();
-    set({ selectedId: null });
+    set({ selectedId: null, selectedIds: [] });
     await get().load();
   },
 

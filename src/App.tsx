@@ -21,12 +21,15 @@ export default function App() {
   const loading = useClipboard((state) => state.loading);
   const error = useClipboard((state) => state.error);
   const selectedId = useClipboard((state) => state.selectedId);
+  const selectedIds = useClipboard((state) => state.selectedIds);
   const favoriteCount = useClipboard((state) => state.favoriteCount);
   const totalCount = useClipboard((state) => state.totalCount);
   const load = useClipboard((state) => state.load);
   const setTab = useClipboard((state) => state.setTab);
   const setQuery = useClipboard((state) => state.setQuery);
   const select = useClipboard((state) => state.select);
+  const toggleSelection = useClipboard((state) => state.toggleSelection);
+  const openTransfer = useClipboard((state) => state.openTransfer);
   const toggleFavorite = useClipboard((state) => state.toggleFavorite);
   const togglePin = useClipboard((state) => state.togglePin);
   const remove = useClipboard((state) => state.remove);
@@ -115,6 +118,24 @@ export default function App() {
     void getCurrentWindow()
       .minimize()
       .catch(() => undefined);
+  };
+
+  const handleSelect = (id: string) => {
+    select(id);
+    toggleSelection(id);
+  };
+
+  const openTransferWindow = () => {
+    const ids = selectedIds.length
+      ? selectedIds
+      : selected
+        ? [selected.id]
+        : [];
+    if (!ids.length) {
+      toast('请先选择内容');
+      return;
+    }
+    void run(() => openTransfer(ids));
   };
 
   useEffect(() => {
@@ -267,8 +288,9 @@ export default function App() {
         <ClipboardList
           items={items}
           selectedId={selectedId}
+          selectedIds={selectedIds}
           loading={loading}
-          onSelect={select}
+          onSelect={handleSelect}
           onCopy={(id) => void run(() => copy(id), '已复制')}
           onPaste={(id) => void run(() => paste(id))}
           onFavorite={(id) => void run(() => toggleFavorite(id))}
@@ -276,9 +298,10 @@ export default function App() {
         />
         <SideRail
           hasSelection={Boolean(selected)}
+          selectionCount={selectedIds.length}
           onCopy={copyCurrent}
           onFavorite={favoriteCurrent}
-          onTransfer={() => toast('临时中转将在 M2 接入独立窗口')}
+          onTransfer={openTransferWindow}
           onSettings={() => toast('设置将在 M3 提供')}
           onClear={clearAll}
         />

@@ -2,6 +2,7 @@ import { Icon } from '../lib/icons';
 
 interface Props {
   hasSelection: boolean;
+  selectionCount: number;
   onCopy: () => void;
   onFavorite: () => void;
   onTransfer: () => void;
@@ -11,6 +12,7 @@ interface Props {
 
 export function SideRail({
   hasSelection,
+  selectionCount,
   onCopy,
   onFavorite,
   onTransfer,
@@ -40,8 +42,9 @@ export function SideRail({
         </button>
         <button
           type="button"
-          className="quick-btn quick-btn-pending"
-          title="多选 / 临时中转（M2 开放）"
+          className="quick-btn"
+          title="多选 / 临时中转"
+          data-count={selectionCount > 0 ? selectionCount : undefined}
           onClick={onTransfer}
         >
           <Icon name="pin" />

@@ -7,4 +7,5 @@ pub struct AppState {
     pub store: Arc<Mutex<Store>>,
     pub suppress: Arc<Mutex<Option<String>>>,
     pub media_dir: PathBuf,
+    pub transfer_ids: Mutex<Vec<String>>,
 }
