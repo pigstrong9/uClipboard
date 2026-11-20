@@ -18,6 +18,30 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+fn toggle_main(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let visible = window.is_visible().unwrap_or(false);
+        let minimized = window.is_minimized().unwrap_or(false);
+        if visible && !minimized {
+            let _ = window.hide();
+        } else {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+fn on_shortcut(
+    app: &tauri::AppHandle,
+    _shortcut: &tauri_plugin_global_shortcut::Shortcut,
+    event: tauri_plugin_global_shortcut::ShortcutEvent,
+) {
+    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+        toggle_main(app);
+    }
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -45,21 +69,18 @@ pub fn run() {
             clipboard::monitor::spawn_monitor(handle, store, suppress, media_dir);
 
             {
-                use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-
-                app.handle().plugin(
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(|app, _shortcut, event| {
-                            if event.state == ShortcutState::Pressed {
-                                show_main(app);
-                            }
-                        })
-                        .build(),
-                )?;
-
-                if let Err(error) = app.handle().global_shortcut().register("alt+v") {
-                    eprintln!("register Alt+V failed: {error}");
-                }
+                let builder =
+                    tauri_plugin_global_shortcut::Builder::new().with_shortcuts(["alt+v"]);
+                let plugin = match builder {
+                    Ok(builder) => builder.with_handler(on_shortcut).build(),
+                    Err(error) => {
+                        eprintln!("register Alt+V failed: {error}");
+                        tauri_plugin_global_shortcut::Builder::new()
+                            .with_handler(on_shortcut)
+                            .build()
+                    }
+                };
+                app.handle().plugin(plugin)?;
             }
 
             let icon = app
@@ -104,6 +125,7 @@ pub fn run() {
             commands::clear_items,
             commands::copy_item,
             commands::paste_item,
+            commands::paste_transfer_item,
             commands::open_transfer,
             commands::transfer_items,
             commands::copy_transfer,

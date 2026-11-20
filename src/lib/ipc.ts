@@ -31,6 +31,10 @@ export function pasteItem(id: string) {
   return invoke<ClipItem>('paste_item', { id });
 }
 
+export function pasteTransferItem(id: string) {
+  return invoke<ClipItem>('paste_transfer_item', { id });
+}
+
 export function stats() {
   return invoke<number>('stats');
 }

@@ -12,11 +12,13 @@ function TransferCard({
   index,
   expanded,
   onToggleExpand,
+  onPaste,
 }: {
   item: ClipItem;
   index: number;
   expanded: boolean;
   onToggleExpand: (id: string) => void;
+  onPaste: (id: string) => void;
 }) {
   const extra = parseExtra(item.extra);
   const files = item.kind === 'files' ? parseFiles(item.content) : [];
@@ -28,7 +30,11 @@ function TransferCard({
         : `${extra.count ?? files.length} 个文件`;
 
   return (
-    <article className={`item transfer-card ${index === 0 ? 'active' : ''}`}>
+    <article
+      className={`item transfer-card ${index === 0 ? 'active' : ''}`}
+      title="双击粘贴"
+      onDoubleClick={() => onPaste(item.id)}
+    >
       <div className="item-main">
         {item.kind === 'text' && (
           <>
@@ -159,6 +165,15 @@ export default function TransferApp() {
     });
   };
 
+  const pasteItem = async (id: string) => {
+    try {
+      await ipc.pasteTransferItem(id);
+      toast('已粘贴');
+    } catch (error) {
+      toast(String(error));
+    }
+  };
+
   return (
     <div className="transfer-window">
       <div className="transfer-head" data-tauri-drag-region>
@@ -219,6 +234,7 @@ export default function TransferApp() {
               index={index}
               expanded={expanded.has(item.id)}
               onToggleExpand={toggleExpand}
+              onPaste={pasteItem}
             />
           ))
         ) : (

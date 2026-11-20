@@ -1,5 +1,9 @@
 use std::path::Path;
 
+use enigo::{
+    Direction::{Click, Press, Release},
+    Enigo, Key, Keyboard, Settings,
+};
 use tauri::{
     Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
@@ -30,6 +34,49 @@ fn item_hash(item: &ClipItem, media_dir: &Path) -> Result<String, String> {
             Ok(hash_files(&files))
         }
     }
+}
+
+fn write_item_to_clipboard(app_state: &AppState, id: &str) -> Result<ClipItem, String> {
+    let item = app_state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(id)
+        .map_err(|e| e.to_string())?;
+
+    let source = SystemClipboard;
+    if !source.write(&item, &app_state.media_dir) {
+        return Err("写入剪贴板失败".to_string());
+    }
+
+    let hash = item_hash(&item, &app_state.media_dir)?;
+    {
+        let mut guard = app_state.suppress.lock().map_err(|e| e.to_string())?;
+        *guard = Some(hash);
+    }
+
+    let updated = {
+        let store = app_state.store.lock().map_err(|e| e.to_string())?;
+        store.touch(id).map_err(|e| e.to_string())?;
+        store.get(id).map_err(|e| e.to_string())?
+    };
+    Ok(with_thumb(updated, app_state))
+}
+
+fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        enigo.key(Key::Meta, Press).map_err(|e| e.to_string())?;
+        enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
+        enigo.key(Key::Meta, Release).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
+        enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
+        enigo.key(Key::Control, Release).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn transfer_items_inner(
@@ -180,31 +227,7 @@ pub fn clear_items(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn copy_item(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
-    let app_state = state.inner();
-    let item = app_state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get(&id)
-        .map_err(|e| e.to_string())?;
-
-    let source = SystemClipboard;
-    if !source.write(&item, &app_state.media_dir) {
-        return Err("写入剪贴板失败".to_string());
-    }
-
-    let hash = item_hash(&item, &app_state.media_dir)?;
-    {
-        let mut guard = app_state.suppress.lock().map_err(|e| e.to_string())?;
-        *guard = Some(hash);
-    }
-
-    let updated = {
-        let store = app_state.store.lock().map_err(|e| e.to_string())?;
-        store.touch(&id).map_err(|e| e.to_string())?;
-        store.get(&id).map_err(|e| e.to_string())?
-    };
-    Ok(with_thumb(updated, app_state))
+    write_item_to_clipboard(state.inner(), &id)
 }
 
 #[tauri::command]
@@ -213,36 +236,8 @@ pub fn paste_item(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<ClipItem, String> {
-    use enigo::{
-        Direction::{Click, Press, Release},
-        Enigo, Key, Keyboard, Settings,
-    };
-    use tauri::Manager;
-
     let app_state = state.inner();
-    let item = app_state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get(&id)
-        .map_err(|e| e.to_string())?;
-
-    let source = SystemClipboard;
-    if !source.write(&item, &app_state.media_dir) {
-        return Err("写入剪贴板失败".to_string());
-    }
-
-    let hash = item_hash(&item, &app_state.media_dir)?;
-    {
-        let mut guard = app_state.suppress.lock().map_err(|e| e.to_string())?;
-        *guard = Some(hash);
-    }
-
-    let updated = {
-        let store = app_state.store.lock().map_err(|e| e.to_string())?;
-        store.touch(&id).map_err(|e| e.to_string())?;
-        store.get(&id).map_err(|e| e.to_string())?
-    };
+    let updated = write_item_to_clipboard(app_state, &id)?;
 
     let window = app
         .get_webview_window("main")
@@ -253,29 +248,49 @@ pub fn paste_item(
     window.hide().map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let paste_result = (|| -> Result<(), String> {
-        #[cfg(target_os = "macos")]
-        {
-            enigo.key(Key::Meta, Press).map_err(|e| e.to_string())?;
-            enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
-            enigo.key(Key::Meta, Release).map_err(|e| e.to_string())?;
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
-            enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
-            enigo.key(Key::Control, Release).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    })();
-
-    if let Err(error) = paste_result {
+    if let Err(error) = send_paste_shortcut(&mut enigo) {
         let _ = window.show();
         let _ = window.set_focus();
         return Err(format!("自动粘贴失败: {error}"));
     }
 
-    Ok(with_thumb(updated, app_state))
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn paste_transfer_item(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ClipItem, String> {
+    let app_state = state.inner();
+    let updated = write_item_to_clipboard(app_state, &id)?;
+
+    let transfer = app
+        .get_webview_window("transfer")
+        .ok_or_else(|| "中转窗口不存在".to_string())?;
+    let main = app.get_webview_window("main");
+    let mut enigo =
+        Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+
+    transfer.hide().map_err(|e| e.to_string())?;
+    if let Some(main) = &main {
+        if main.is_visible().unwrap_or(false) {
+            let _ = main.hide();
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    if let Err(error) = send_paste_shortcut(&mut enigo) {
+        let _ = transfer.show();
+        let _ = transfer.set_focus();
+        return Err(format!("自动粘贴失败: {error}"));
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    transfer.show().map_err(|e| e.to_string())?;
+    let _ = app.emit("clipboard-changed", ());
+    Ok(updated)
 }
 
 #[tauri::command]
