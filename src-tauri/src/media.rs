@@ -6,7 +6,6 @@ use image::{GenericImageView, ImageFormat};
 
 pub struct SavedImage {
     pub rel_path: String,
-    pub thumb_data_url: Option<String>,
     pub width: u32,
     pub height: u32,
 }
@@ -21,18 +20,12 @@ pub fn save_png(media_dir: &Path, hash: &str, png: &[u8]) -> Result<SavedImage, 
     let (width, height) = img.dimensions();
     let thumb = img.thumbnail(300, 300).to_rgb8();
     let mut buffer = Cursor::new(Vec::new());
-    let thumb_data_url = match thumb.write_to(&mut buffer, ImageFormat::Jpeg) {
-        Ok(()) => {
-            let bytes = buffer.into_inner();
-            let _ = std::fs::write(images.join(format!("{hash}_thumb.jpg")), &bytes);
-            Some(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)))
-        }
-        Err(_) => None,
-    };
+    if thumb.write_to(&mut buffer, ImageFormat::Jpeg).is_ok() {
+        let _ = std::fs::write(images.join(format!("{hash}_thumb.jpg")), buffer.into_inner());
+    }
 
     Ok(SavedImage {
         rel_path: format!("images/{hash}.png"),
-        thumb_data_url,
         width,
         height,
     })

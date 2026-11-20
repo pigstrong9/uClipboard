@@ -10,6 +10,12 @@ if not exist "%VSWHERE%" (
 for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSPATH=%%i"
 
 if not defined VSPATH (
+  if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
+    set "VSPATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools"
+  )
+)
+
+if not defined VSPATH (
   echo Visual Studio Build Tools with the C++ workload was not found.
   exit /b 1
 )

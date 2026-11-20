@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use clipboard_rs::{Clipboard, ClipboardContext, RustImage, RustImageData};
+use clipboard_rs::common::RustImage;
+use clipboard_rs::{Clipboard, ClipboardContext, RustImageData};
 
 use crate::models::{ClipItem, ClipKind};
 
@@ -9,8 +10,6 @@ pub struct RawCapture {
     pub text: Option<String>,
     pub html: Option<String>,
     pub image_png: Option<Vec<u8>>,
-    pub width: u32,
-    pub height: u32,
     pub files: Vec<String>,
 }
 
@@ -32,8 +31,6 @@ impl ClipboardSource for SystemClipboard {
                     text: None,
                     html: None,
                     image_png: None,
-                    width: 0,
-                    height: 0,
                     files,
                 });
             }
@@ -41,15 +38,12 @@ impl ClipboardSource for SystemClipboard {
 
         if let Ok(image) = ctx.get_image() {
             if !image.is_empty() {
-                let (width, height) = image.get_size();
                 if let Ok(png) = image.to_png() {
                     return Some(RawCapture {
                         kind: ClipKind::Image,
                         text: None,
                         html: None,
                         image_png: Some(png.get_bytes().to_vec()),
-                        width,
-                        height,
                         files: Vec::new(),
                     });
                 }
@@ -64,8 +58,6 @@ impl ClipboardSource for SystemClipboard {
                     text: Some(text),
                     html,
                     image_png: None,
-                    width: 0,
-                    height: 0,
                     files: Vec::new(),
                 });
             }

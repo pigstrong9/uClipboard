@@ -41,6 +41,7 @@ impl Store {
         Self::from_conn(conn)
     }
 
+    #[cfg(test)]
     pub fn in_memory() -> rusqlite::Result<Self> {
         Self::from_conn(Connection::open_in_memory()?)
     }
@@ -322,7 +323,7 @@ mod tests {
         store.insert(new_text("c", "h3")).unwrap();
         store.toggle_pin(&a.id).unwrap();
         store.toggle_favorite(&b.id).unwrap();
-        store.prune(1).unwrap();
+        store.prune(0).unwrap();
         assert_eq!(store.count().unwrap(), 2);
     }
 }
