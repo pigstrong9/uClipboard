@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 用纯静态 HTML/CSS/JS 复刻 uTools 剪贴板主界面，带真实 mock 数据、亮暗双主题与完整键盘交互，供视觉确认后进入 Tauri 实现。
+**Goal:** 用纯静态 HTML/CSS/JS 实现高保真剪贴板管理器主界面，带匿名 mock 数据、亮暗双主题与完整键盘交互，供视觉确认后进入 Tauri 实现。
 
 **Architecture:** 单页应用，无构建步骤、无第三方依赖，`node prototypes/serve.js` 启动本地静态服务。界面由 `index.html` 骨架 + `styles.css` 主题 token + `mock-data.js` 数据 + `app.js` 渲染与交互组成。所有图标内联 SVG，字体走系统字体栈。
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 不使用 uTools 的 Logo、图标、截图等美术素材；图标为 Lucide 风格内联 SVG 或自绘
+- 不使用任何第三方产品的 Logo、图标、截图等美术素材；图标为 Lucide 风格内联 SVG 或自绘
 - 不复制闭源或无许可证项目的代码
 - 原型无网络请求：不引 CDN、不加载外部字体、不加载外部图片
 - 界面文案为简体中文；i18n 接线留到 M3
@@ -21,7 +21,7 @@
 - 字体：`-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`；文本预览用等宽字体栈
 - 原型状态仅存内存，刷新即重置，不做 localStorage 持久化
 - 提交身份使用一次性参数，不修改 git config：
-  `git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit ...`
+  `git -c user.name="Your Name" -c user.email="you@example.com" commit ...`
 - 所有验证通过 browser-use MCP 的 `navigate_page` / `evaluate_script` / `take_screenshot` 完成
 - 每个任务开始验证前刷新页面，确保内存状态从 mock 数据重新初始化
 
@@ -303,7 +303,7 @@ Expected: `{"app":true,"theme":"dark","tabs":0}`（tabs 在 Task 2 渲染）
 
 ```bash
 git add prototypes/serve.js prototypes/index.html prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): scaffold window shell and theme tokens"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): scaffold window shell and theme tokens"
 ```
 
 ---
@@ -325,179 +325,37 @@ git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.g
 
 ```js
 // prototypes/mock-data.js
-const now = Date.now();
-const min = 60 * 1000;
-const day = 24 * 60 * min;
-
-function svgImage(width, height, label) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <rect width="100%" height="100%" fill="#111418"/>
-    <rect x="6" y="6" width="90%" height="20" rx="3" fill="#1d2530"/>
-    <text x="14" y="21" font-family="Consolas, monospace" font-size="12" fill="#7dd3fc">${label}</text>
-    <rect x="6" y="34" width="70%" height="10" rx="2" fill="#243244"/>
-    <rect x="6" y="50" width="55%" height="10" rx="2" fill="#243244"/>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
+// 正式实现见 prototypes/mock-data.js：12 条匿名示例数据，含文本/图片/文件与 3 条收藏。
+// 示例条目结构如下（完整文件另含 4 条文件路径、2 张图片和长文本展开用例）：
 window.MOCK_ITEMS = [
   {
     id: 'itm-001',
     kind: 'image',
-    content: 'mock://image/terminal',
-    extra: { width: 1205, height: 903, thumb: svgImage(1205, 903, 'ALL_RECORDS = ...') },
+    content: 'mock://image/screenshot',
+    extra: { width: 1205, height: 903, thumb: svgImage(1205, 903, 'screenshot.png') },
     preview: '',
     size: 1205 * 903,
     favorite: false,
     pinned: false,
     copy_count: 2,
-    created_at: now - 1 * min,
-    updated_at: now - 1 * min,
-  },
-  {
-    id: 'itm-002',
-    kind: 'files',
-    content: [
-      'C:/Users/pigstrong/Documents/内部 gitlab 使用指南-v2.pdf',
-      'C:/Users/pigstrong/Downloads/图片批量处理 MAC 版-1.9.1.upxs',
-      'C:/Users/pigstrong/Downloads/图片批量处理-1.9.1.upxs',
-      'C:/Users/pigstrong/Downloads/图片批量处理-2.0.1.upxs',
-    ],
-    extra: { count: 4 },
-    preview: '内部 gitlab 使用指南-v2.pdf 等 4 个文件',
-    size: 4,
-    favorite: false,
-    pinned: false,
-    copy_count: 3,
-    created_at: now - 3 * min,
-    updated_at: now - 3 * min,
+    created_at: now - 60 * 1000,
+    updated_at: now - 60 * 1000,
   },
   {
     id: 'itm-003',
     kind: 'text',
-    content: `if (!ALL_RECORDS) return
-const deletedHashes = JSON.parse(window.localStorage.getItem(event.key))
-ALL_RECORDS = ALL_RECORDS.filter(x => !deletedHashes.includes(x.hash))
-const tabIndex = this.state.tabIndex
-if (IS_PIN_SCREEN) {
-  if (tabIndex === 'clipboard') this.tabChange(tabIndex)`,
-    preview: 'if (!ALL_RECORDS) return …',
-    size: 440,
+    content: `export async function readClipboard(): Promise<ClipItem | null> {
+  const text = await navigator.clipboard.readText()
+  if (!text.trim()) return null
+  return { id: crypto.randomUUID(), kind: 'text', content: text }
+}` ,
+    preview: 'export async function readClipboard…',
+    size: 210,
     favorite: false,
     pinned: false,
     copy_count: 4,
-    created_at: now - 9 * min,
-    updated_at: now - 9 * min,
-  },
-  {
-    id: 'itm-004',
-    kind: 'text',
-    content: 'window.localStorage.setItem("records-removed", JSON.stringify(recordItems.map(x => x.hash)))',
-    preview: 'window.localStorage.setItem("records-removed", …',
-    size: 92,
-    favorite: true,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 10 * min,
-    updated_at: now - 10 * min,
-  },
-  {
-    id: 'itm-005',
-    kind: 'text',
-    content: 'this.tabChange(this.state.tabIndex)',
-    preview: 'this.tabChange(this.state.tabIndex)',
-    size: 35,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 23 * min,
-    updated_at: now - 23 * min,
-  },
-  {
-    id: 'itm-006',
-    kind: 'text',
-    content: 'ALL_RECORDS = ALL_RECORDS.filter(x => !recordItems.includes(x))',
-    preview: 'ALL_RECORDS = ALL_RECORDS.filter(x => !recordItems.includes(x))',
-    size: 63,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 24 * min,
-    updated_at: now - 24 * min,
-  },
-  {
-    id: 'itm-007',
-    kind: 'text',
-    content: 'https://github.com/pigstrong9/LoveqPodcast/releases/download/v1.4/app-release.apk',
-    preview: 'https://github.com/pigstrong9/LoveqPodcast/releases/…',
-    size: 81,
-    favorite: true,
-    pinned: false,
-    copy_count: 2,
-    created_at: now - 2 * day,
-    updated_at: now - 2 * day,
-  },
-  {
-    id: 'itm-008',
-    kind: 'text',
-    content: '#为了上下班路上听播客，我花了 2 天时间开发了一个 APP\n\n《一些事一些情》这个电台节目，我从高中就开始听了，断断续续十几年，到现在还是每天上下班开车路上的固定搭子。\n\n但说实话，现在想好好听个节目，还真没那么简单。',
-    preview: '#为了上下班路上听播客，我花了 2 天时间开发了一个 APP',
-    size: 688,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 35 * day,
-    updated_at: now - 35 * day,
-  },
-  {
-    id: 'itm-009',
-    kind: 'image',
-    content: 'mock://image/chart',
-    extra: { width: 1920, height: 1080, thumb: svgImage(1920, 1080, 'chart-2026-q4.png') },
-    preview: '',
-    size: 1920 * 1080,
-    favorite: true,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 40 * day,
-    updated_at: now - 40 * day,
-  },
-  {
-    id: 'itm-010',
-    kind: 'files',
-    content: ['D:/workspace/uClipboard/prototypes/index.html', 'D:/workspace/uClipboard/prototypes/app.js'],
-    extra: { count: 2 },
-    preview: 'index.html 等 2 个文件',
-    size: 2,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 41 * day,
-    updated_at: now - 41 * day,
-  },
-  {
-    id: 'itm-011',
-    kind: 'text',
-    content: 'npm install\nnpm run dev\ncargo tauri dev',
-    preview: 'npm install / npm run dev / cargo tauri dev',
-    size: 38,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 42 * day,
-    updated_at: now - 42 * day,
-  },
-  {
-    id: 'itm-012',
-    kind: 'text',
-    content: '这是一段用于测试长文本展开与收起的记录。'.repeat(20),
-    preview: '这是一段用于测试长文本展开与收起的记录。'.repeat(3),
-    size: 420,
-    favorite: false,
-    pinned: false,
-    copy_count: 1,
-    created_at: now - 50 * day,
-    updated_at: now - 50 * day,
+    created_at: now - 9 * 60 * 1000,
+    updated_at: now - 9 * 60 * 1000,
   },
 ];
 ```
@@ -718,7 +576,7 @@ Expected: `tabs` 为 `["all","text","image","files","favorite"]`，`counts.all` 
 
 ```bash
 git add prototypes/mock-data.js prototypes/app.js prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): add mock data, tabs and search"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): add mock data, tabs and search"
 ```
 
 ---
@@ -892,7 +750,7 @@ Expected: `count` 为 12；`kinds` 中同时出现 `image-preview`、`file-list`
 
 ```bash
 git add prototypes/app.js prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): render text, image and file items"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): render text, image and file items"
 ```
 
 ---
@@ -1152,7 +1010,7 @@ Expected: `after[0] === before[2]`，且列表重新打开时该条位于第一�
 
 ```bash
 git add prototypes/app.js prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): add keyboard, mouse and use-to-top behavior"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): add keyboard, mouse and use-to-top behavior"
 ```
 
 ---
@@ -1336,7 +1194,7 @@ document.addEventListener('click', (event) => {
 
 ```bash
 git add prototypes/app.js prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): add preview modal and context menu"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): add preview modal and context menu"
 ```
 
 ---
@@ -1542,7 +1400,7 @@ if (!document.getElementById('settings').hidden) return closeSettings();
 
 ```bash
 git add prototypes/index.html prototypes/app.js prototypes/styles.css
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): add settings panel and theme toggle"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): add settings panel and theme toggle"
 ```
 
 ---
@@ -1613,7 +1471,7 @@ Expected: 5 个 Tab、12 条记录、三类条目都存在。
 
 ```bash
 git add prototypes docs/superpowers/plans/2026-11-20-uclipboard-m0-acceptance.md
-git -c user.name="pig strong" -c user.email="29220747+pigstrong9@users.noreply.github.com" commit -m "feat(prototype): polish visuals and record M0 acceptance"
+git -c user.name="Your Name" -c user.email="you@example.com" commit -m "feat(prototype): polish visuals and record M0 acceptance"
 ```
 
 ---

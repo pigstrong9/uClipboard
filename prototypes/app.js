@@ -21,13 +21,22 @@ const ICONS = {
   search:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  logo: '<svg viewBox="0 0 24 24"><rect x="3" y="8" width="12" height="13" rx="3" fill="currentColor" opacity=".45"/><rect x="9" y="3" width="12" height="13" rx="3" fill="currentColor"/></svg>',
+  close:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  folder:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+  bookmark:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1Z"/></svg>',
 };
 
-document.querySelector('.brand-logo').innerHTML = ICONS.clipboard;
+document.querySelector('.brand-logo').innerHTML = ICONS.logo;
 document.querySelector('.search-icon').innerHTML = ICONS.search;
 document.getElementById('themeBtn').innerHTML = ICONS.sun;
 document.getElementById('settingsBtn').innerHTML = ICONS.gear;
 document.getElementById('moreBtn').innerHTML = ICONS.more;
+document.getElementById('hideBtn').innerHTML = ICONS.close;
 document.querySelector('[data-quick-action="copy"]').innerHTML = ICONS.copy;
 document.querySelector('[data-quick-action="paste"]').innerHTML = ICONS.paste;
 document.querySelector('[data-quick-action="pin"]').innerHTML = ICONS.pin;
@@ -43,11 +52,11 @@ const state = {
 };
 
 const TABS = [
-  { key: 'all', label: '全部', icon: 'layers' },
+  { key: 'all', label: '全部', icon: 'grid' },
   { key: 'text', label: '文本', icon: 'text' },
   { key: 'image', label: '图像', icon: 'image' },
-  { key: 'files', label: '文件', icon: 'files' },
-  { key: 'favorite', label: '收藏', icon: 'star' },
+  { key: 'files', label: '文件', icon: 'folder' },
+  { key: 'favorite', label: '收藏', icon: 'bookmark' },
 ];
 
 function sortedItems() {
@@ -89,7 +98,7 @@ function renderTabs() {
       <button class="tab ${state.tab === tab.key ? 'active' : ''}" data-tab="${tab.key}" role="tab">
         <span class="tab-icon">${ICONS[tab.icon]}</span>
         <span>${tab.label}</span>
-        ${tab.key === 'favorite' ? `<span class="tab-count">${counts.favorite}</span>` : ''}
+        <span class="tab-count">${counts[tab.key]}</span>
       </button>`
   ).join('');
 }
@@ -116,7 +125,7 @@ function renderList() {
   state.selected = Math.min(state.selected, Math.max(items.length - 1, 0));
   if (!items.length) {
     list.innerHTML = `<div class="empty">
-      <div class="empty-icon">${ICONS.clipboard}</div>
+      <div class="empty-icon">${ICONS.logo}</div>
       <p>${state.query ? '没有匹配的记录' : '还没有剪贴板记录'}</p>
       <span>${state.query ? '换个关键词试试' : '复制任意内容后会自动出现在这里'}</span>
     </div>`;
@@ -276,9 +285,16 @@ function renderItem(item, index) {
       .join('')}</ul>`;
   }
 
-  return `<article class="item ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
+  const kindMeta = {
+    text: { label: '文本', icon: ICONS.text },
+    image: { label: '图像', icon: ICONS.image },
+    files: { label: '文件', icon: ICONS.folder },
+  }[item.kind];
+
+  return `<article class="item kind-${item.kind} ${index === state.selected ? 'selected' : ''}" data-id="${item.id}" data-index="${index}">
     <div class="item-main">${body}</div>
     <div class="item-meta">
+      <span class="kind-chip kind-${item.kind}">${kindMeta.icon}<em>${kindMeta.label}</em></span>
       <span class="item-time">${formatRelativeTime(item.updated_at)}</span>
       <span class="item-size">${meta}</span>
       ${index < 9 ? `<span class="item-index">${index + 1}</span>` : ''}

@@ -26,8 +26,8 @@ window.MOCK_ITEMS = [
   {
     id: 'itm-001',
     kind: 'image',
-    content: 'mock://image/terminal',
-    extra: { width: 1205, height: 903, thumb: svgImage(1205, 903, 'ALL_RECORDS = ...') },
+    content: 'mock://image/screenshot',
+    extra: { width: 1205, height: 903, thumb: svgImage(1205, 903, 'screenshot.png') },
     preview: '',
     size: 1205 * 903,
     favorite: false,
@@ -40,13 +40,13 @@ window.MOCK_ITEMS = [
     id: 'itm-002',
     kind: 'files',
     content: [
-      'C:/Users/pigstrong/Documents/内部 gitlab 使用指南-v2.pdf',
-      'C:/Users/pigstrong/Downloads/图片批量处理 MAC 版-1.9.1.upxs',
-      'C:/Users/pigstrong/Downloads/图片批量处理-1.9.1.upxs',
-      'C:/Users/pigstrong/Downloads/图片批量处理-2.0.1.upxs',
+      'C:/Users/example/Documents/项目说明.pdf',
+      'C:/Users/example/Downloads/设计规范-v2.pdf',
+      'C:/Users/example/Downloads/demo-assets.zip',
+      'C:/Users/example/Downloads/release-notes.md',
     ],
     extra: { count: 4 },
-    preview: '内部 gitlab 使用指南-v2.pdf 等 4 个文件',
+    preview: '项目说明.pdf 等 4 个文件',
     size: 4,
     favorite: false,
     pinned: false,
@@ -57,14 +57,13 @@ window.MOCK_ITEMS = [
   {
     id: 'itm-003',
     kind: 'text',
-    content: `if (!ALL_RECORDS) return
-const deletedHashes = JSON.parse(window.localStorage.getItem(event.key))
-ALL_RECORDS = ALL_RECORDS.filter(x => !deletedHashes.includes(x.hash))
-const tabIndex = this.state.tabIndex
-if (IS_PIN_SCREEN) {
-  if (tabIndex === 'clipboard') this.tabChange(tabIndex)`,
-    preview: 'if (!ALL_RECORDS) return …',
-    size: 440,
+    content: `export async function readClipboard(): Promise<ClipItem | null> {
+  const text = await navigator.clipboard.readText()
+  if (!text.trim()) return null
+  return { id: crypto.randomUUID(), kind: 'text', content: text }
+}`,
+    preview: 'export async function readClipboard…',
+    size: 210,
     favorite: false,
     pinned: false,
     copy_count: 4,
@@ -74,10 +73,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-004',
     kind: 'text',
-    content:
-      'window.localStorage.setItem("records-removed", JSON.stringify(recordItems.map(x => x.hash)))',
-    preview: 'window.localStorage.setItem("records-removed", …',
-    size: 92,
+    content: '{ "historyLimit": 500, "retentionDays": 30, "pastePlainText": false }',
+    preview: '{ "historyLimit": 500, "retentionDays": 30, …',
+    size: 72,
     favorite: true,
     pinned: false,
     copy_count: 1,
@@ -87,9 +85,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-005',
     kind: 'text',
-    content: 'this.tabChange(this.state.tabIndex)',
-    preview: 'this.tabChange(this.state.tabIndex)',
-    size: 35,
+    content: 'pnpm install\npnpm tauri dev\npnpm tauri build',
+    preview: 'pnpm install / pnpm tauri dev / pnpm tauri build',
+    size: 44,
     favorite: false,
     pinned: false,
     copy_count: 1,
@@ -99,9 +97,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-006',
     kind: 'text',
-    content: 'ALL_RECORDS = ALL_RECORDS.filter(x => !recordItems.includes(x))',
-    preview: 'ALL_RECORDS = ALL_RECORDS.filter(x => !recordItems.includes(x))',
-    size: 63,
+    content: 'https://example.com/docs/clipboard-api',
+    preview: 'https://example.com/docs/clipboard-api',
+    size: 39,
     favorite: false,
     pinned: false,
     copy_count: 1,
@@ -112,9 +110,9 @@ if (IS_PIN_SCREEN) {
     id: 'itm-007',
     kind: 'text',
     content:
-      'https://github.com/pigstrong9/LoveqPodcast/releases/download/v1.4/app-release.apk',
-    preview: 'https://github.com/pigstrong9/LoveqPodcast/releases/…',
-    size: 81,
+      '# 剪贴板工具开发笔记\n\n1. 监听系统剪贴板变化\n2. 内容去重与置顶\n3. 全局快捷键唤起\n\n记录一次周末原型开发的思路。',
+    preview: '# 剪贴板工具开发笔记',
+    size: 72,
     favorite: true,
     pinned: false,
     copy_count: 2,
@@ -124,10 +122,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-008',
     kind: 'text',
-    content:
-      '#为了上下班路上听播客，我花了 2 天时间开发了一个 APP\n\n《一些事一些情》这个电台节目，我从高中就开始听了，断断续续十几年，到现在还是每天上下班开车路上的固定搭子。\n\n但说实话，现在想好好听个节目，还真没那么简单。',
-    preview: '#为了上下班路上听播客，我花了 2 天时间开发了一个 APP',
-    size: 688,
+    content: '这是一段用于测试长文本展开与收起的示例内容。'.repeat(20),
+    preview: '这是一段用于测试长文本展开与收起的示例内容。'.repeat(3),
+    size: 440,
     favorite: false,
     pinned: false,
     copy_count: 1,
@@ -138,7 +135,7 @@ if (IS_PIN_SCREEN) {
     id: 'itm-009',
     kind: 'image',
     content: 'mock://image/chart',
-    extra: { width: 1920, height: 1080, thumb: svgImage(1920, 1080, 'chart-2026-q4.png') },
+    extra: { width: 1920, height: 1080, thumb: svgImage(1920, 1080, 'usage-chart.png') },
     preview: '',
     size: 1920 * 1080,
     favorite: true,
@@ -150,12 +147,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-010',
     kind: 'files',
-    content: [
-      'D:/workspace/uClipboard/prototypes/index.html',
-      'D:/workspace/uClipboard/prototypes/app.js',
-    ],
+    content: ['D:/workspace/demo/README.md', 'D:/workspace/demo/package.json'],
     extra: { count: 2 },
-    preview: 'index.html 等 2 个文件',
+    preview: 'README.md 等 2 个文件',
     size: 2,
     favorite: false,
     pinned: false,
@@ -166,9 +160,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-011',
     kind: 'text',
-    content: 'npm install\nnpm run dev\ncargo tauri dev',
-    preview: 'npm install / npm run dev / cargo tauri dev',
-    size: 38,
+    content: 'SELECT kind, COUNT(*) AS total FROM items GROUP BY kind ORDER BY total DESC;',
+    preview: 'SELECT kind, COUNT(*) AS total FROM items GROUP BY kind …',
+    size: 74,
     favorite: false,
     pinned: false,
     copy_count: 1,
@@ -178,9 +172,9 @@ if (IS_PIN_SCREEN) {
   {
     id: 'itm-012',
     kind: 'text',
-    content: '这是一段用于测试长文本展开与收起的记录。'.repeat(20),
-    preview: '这是一段用于测试长文本展开与收起的记录。'.repeat(3),
-    size: 420,
+    content: 'git commit -m "feat: clipboard history"',
+    preview: 'git commit -m "feat: clipboard history"',
+    size: 41,
     favorite: false,
     pinned: false,
     copy_count: 1,
