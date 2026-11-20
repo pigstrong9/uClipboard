@@ -20,6 +20,7 @@ const ICONS = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
   search:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
 };
 
 document.querySelector('.brand-logo').innerHTML = ICONS.clipboard;
@@ -27,6 +28,11 @@ document.querySelector('.search-icon').innerHTML = ICONS.search;
 document.getElementById('themeBtn').innerHTML = ICONS.sun;
 document.getElementById('settingsBtn').innerHTML = ICONS.gear;
 document.getElementById('moreBtn').innerHTML = ICONS.more;
+document.querySelector('[data-quick-action="copy"]').innerHTML = ICONS.copy;
+document.querySelector('[data-quick-action="paste"]').innerHTML = ICONS.paste;
+document.querySelector('[data-quick-action="pin"]').innerHTML = ICONS.pin;
+document.getElementById('settingsTextBtn').innerHTML = ICONS.gear;
+document.getElementById('clearBtn').innerHTML = ICONS.trash;
 
 const state = {
   items: window.MOCK_ITEMS.map((item) => ({ ...item })),
@@ -222,6 +228,16 @@ document.getElementById('contextMenu').addEventListener('click', (event) => {
 
 document.addEventListener('click', (event) => {
   if (!event.target.closest('#contextMenu')) closeContextMenu();
+});
+
+document.querySelector('.quick-rail').addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-quick-action]');
+  if (!btn) return;
+  const item = currentItem();
+  if (!item) return;
+  if (btn.dataset.quickAction === 'copy') copyItem(item.id);
+  if (btn.dataset.quickAction === 'paste') pasteItem(item.id);
+  if (btn.dataset.quickAction === 'pin') togglePin(item.id);
 });
 
 function formatRelativeTime(ts) {
@@ -551,5 +567,12 @@ document.getElementById('clearBtn').addEventListener('click', () => {
   renderAll();
   toast('历史已清空');
 });
+
+const params = new URLSearchParams(window.location.search);
+const themeParam = params.get('theme');
+if (themeParam === 'light' || themeParam === 'dark') setTheme(themeParam);
+const tabParam = params.get('tab');
+if (TABS.some((tab) => tab.key === tabParam)) state.tab = tabParam;
+if (params.get('settings') === '1') openSettings();
 
 renderAll();

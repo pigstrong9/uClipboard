@@ -35,13 +35,16 @@
         </aside>
         <section class="settings-body" id="settingsBody"></section>
       </div>
-      <footer class="statusbar">
-        <span id="statusText">监控中 · 共 0 条</span>
-        <div class="status-actions">
-          <button class="text-btn" id="settingsTextBtn">设置</button>
-          <button class="text-btn danger" id="clearBtn">清空历史</button>
-        </div>
-      </footer>
+      <div class="status-float" id="statusText">监控中 · 共 0 条</div>
+      <div class="quick-rail" aria-label="快捷操作">
+        <button class="quick-btn" data-quick-action="copy" title="复制"></button>
+        <button class="quick-btn" data-quick-action="paste" title="粘贴"></button>
+        <button class="quick-btn" data-quick-action="pin" title="置顶"></button>
+      </div>
+      <div class="utility-rail">
+        <button class="icon-btn rail-btn" id="settingsTextBtn" title="设置"></button>
+        <button class="icon-btn rail-btn" id="clearBtn" title="清空历史"></button>
+      </div>
     </main>
     <div class="toast" id="toast" role="status" hidden></div>
     <div class="modal-backdrop" id="modal" hidden></div>
