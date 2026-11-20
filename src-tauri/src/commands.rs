@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[cfg(not(target_os = "windows"))]
 use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Key, Keyboard, Settings,
@@ -68,21 +69,35 @@ fn write_item_to_clipboard(app_state: &AppState, id: &str) -> Result<ClipItem, S
     Ok(with_thumb(updated, app_state))
 }
 
+#[cfg(target_os = "windows")]
+fn send_paste_shortcut(_enigo: &mut ()) -> Result<(), String> {
+    if crate::platform::send_paste_keys() {
+        Ok(())
+    } else {
+        Err("发送 Ctrl+V 失败".to_string())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         enigo.key(Key::Meta, Press).map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(15));
         enigo
             .key(Key::Unicode('v'), Click)
             .map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(15));
         enigo.key(Key::Meta, Release).map_err(|e| e.to_string())?;
     }
     #[cfg(not(target_os = "macos"))]
     {
         enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(15));
         enigo
             .key(Key::Unicode('v'), Click)
             .map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(15));
         enigo
             .key(Key::Control, Release)
             .map_err(|e| e.to_string())?;
@@ -416,6 +431,9 @@ pub fn paste_item(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
+    #[cfg(target_os = "windows")]
+    let mut enigo = ();
+    #[cfg(not(target_os = "windows"))]
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
     window.hide().map_err(|e| e.to_string())?;
@@ -443,6 +461,9 @@ pub fn paste_transfer_item(
         .get_webview_window("transfer")
         .ok_or_else(|| "中转窗口不存在".to_string())?;
     let main = app.get_webview_window("main");
+    #[cfg(target_os = "windows")]
+    let mut enigo = ();
+    #[cfg(not(target_os = "windows"))]
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
     #[cfg(target_os = "windows")]

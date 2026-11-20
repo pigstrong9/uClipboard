@@ -145,6 +145,7 @@ pub fn spawn_monitor(
         let mut last_hash: Option<String> = None;
         let mut last_prune = Instant::now();
         let mut was_paused = false;
+        let mut resume_sequence: Option<u32> = None;
         let mut skip_next = false;
 
         loop {
@@ -169,7 +170,8 @@ pub fn spawn_monitor(
             }
             if was_paused {
                 was_paused = false;
-                skip_next = true;
+                resume_sequence = platform::clipboard_sequence();
+                skip_next = resume_sequence.is_none();
             }
 
             let Some(capture) = source.read() else {
@@ -179,6 +181,14 @@ pub fn spawn_monitor(
                 continue;
             };
 
+            if let Some(sequence) = resume_sequence {
+                if platform::clipboard_sequence() == Some(sequence) {
+                    resume_sequence = None;
+                    last_hash = Some(hash);
+                    continue;
+                }
+                resume_sequence = None;
+            }
             if last_hash.as_deref() == Some(hash.as_str()) {
                 continue;
             }

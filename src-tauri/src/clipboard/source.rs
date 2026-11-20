@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use clipboard_rs::common::RustImage;
-use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext, RustImageData};
+#[cfg(not(target_os = "windows"))]
+use clipboard_rs::RustImageData;
+use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
 
 use crate::models::{ClipItem, ClipKind};
 
@@ -91,14 +93,21 @@ impl ClipboardSource for SystemClipboard {
                 return true;
             }
             if name.contains("canincludeinclipboardhistory") {
-                if let Ok(buffer) = ctx.get_buffer(&format) {
-                    let is_zero = buffer.len() >= 4
-                        && u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) == 0;
-                    let is_zero_text = std::str::from_utf8(&buffer)
-                        .map(|text| text.trim_matches('\0').trim() == "0")
-                        .unwrap_or(false);
-                    if is_zero || is_zero_text {
-                        return true;
+                match crate::platform::clipboard_format_dword(&format) {
+                    Some(0) => return true,
+                    Some(_) => {}
+                    None => {
+                        if let Ok(buffer) = ctx.get_buffer(&format) {
+                            let is_zero = buffer.len() >= 4
+                                && u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]])
+                                    == 0;
+                            let is_zero_text = std::str::from_utf8(&buffer)
+                                .map(|text| text.trim_matches('\0').trim() == "0")
+                                .unwrap_or(false);
+                            if is_zero || is_zero_text {
+                                return true;
+                            }
+                        }
                     }
                 }
             }
@@ -146,10 +155,17 @@ impl ClipboardSource for SystemClipboard {
                 let Ok(bytes) = std::fs::read(path) else {
                     return false;
                 };
-                let Ok(image) = RustImageData::from_bytes(&bytes) else {
-                    return false;
-                };
-                ctx.set_image(image).is_ok()
+                #[cfg(target_os = "windows")]
+                {
+                    crate::platform::set_clipboard_image_png(&bytes)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let Ok(image) = RustImageData::from_bytes(&bytes) else {
+                        return false;
+                    };
+                    ctx.set_image(image).is_ok()
+                }
             }
         }
     }
@@ -174,12 +190,19 @@ impl ClipboardSource for SystemClipboard {
     }
 
     fn write_image_png(&self, png: &[u8]) -> bool {
-        let Ok(ctx) = ClipboardContext::new() else {
-            return false;
-        };
-        let Ok(image) = RustImageData::from_bytes(png) else {
-            return false;
-        };
-        ctx.set_image(image).is_ok()
+        #[cfg(target_os = "windows")]
+        {
+            crate::platform::set_clipboard_image_png(png)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let Ok(ctx) = ClipboardContext::new() else {
+                return false;
+            };
+            let Ok(image) = RustImageData::from_bytes(png) else {
+                return false;
+            };
+            ctx.set_image(image).is_ok()
+        }
     }
 }
