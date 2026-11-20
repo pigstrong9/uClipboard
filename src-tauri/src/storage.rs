@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS items (
   pinned      INTEGER NOT NULL DEFAULT 0,
   copy_count  INTEGER NOT NULL DEFAULT 1,
   created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  deleted_at  INTEGER
+  updated_at  INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_items_hash ON items(hash);
 CREATE INDEX IF NOT EXISTS idx_items_order ON items(pinned DESC, updated_at DESC);
@@ -56,7 +55,7 @@ impl Store {
         if let Some(id) = self
             .conn
             .query_row(
-                "SELECT id FROM items WHERE hash = ?1 AND deleted_at IS NULL",
+                "SELECT id FROM items WHERE hash = ?1",
                 params![item.hash],
                 |row| row.get::<_, String>(0),
             )
@@ -90,7 +89,7 @@ impl Store {
     pub fn get(&self, id: &str) -> rusqlite::Result<ClipItem> {
         self.conn.query_row(
             "SELECT id, kind, content, extra, preview, size, source_app, favorite, pinned, copy_count, created_at, updated_at
-             FROM items WHERE id = ?1 AND deleted_at IS NULL",
+             FROM items WHERE id = ?1",
             params![id],
             row_to_item,
         )
@@ -101,8 +100,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, extra, preview, size, source_app, favorite, pinned, copy_count, created_at, updated_at
              FROM items
-             WHERE deleted_at IS NULL
-               AND (?1 IN ('all', 'favorite') OR kind = ?1)
+             WHERE (?1 IN ('all', 'favorite') OR kind = ?1)
                AND (?1 != 'favorite' OR favorite = 1)
                AND (?2 = '' OR content LIKE ?3 ESCAPE '\\' OR preview LIKE ?3 ESCAPE '\\')
              ORDER BY (CASE WHEN ?1 = 'favorite' THEN 0 ELSE pinned END) DESC, updated_at DESC
@@ -173,12 +171,11 @@ impl Store {
         let cutoff = now_ms() - days * 24 * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content FROM items
-             WHERE deleted_at IS NULL
-               AND favorite = 0 AND pinned = 0
+             WHERE favorite = 0 AND pinned = 0
                AND (
                  (?1 > 0 AND id IN (
                    SELECT id FROM items
-                   WHERE deleted_at IS NULL AND favorite = 0 AND pinned = 0
+                   WHERE favorite = 0 AND pinned = 0
                    ORDER BY updated_at DESC
                    LIMIT -1 OFFSET ?1
                  ))
@@ -196,14 +193,21 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(stmt);
 
+        if doomed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // One transaction keeps a half-applied prune from orphaning image files, and turns
+        // N separate fsyncs into one when the history is long.
+        let tx = self.conn.unchecked_transaction()?;
         let mut images = Vec::new();
         for (id, kind, content) in doomed {
             if kind == "image" {
                 images.push(content);
             }
-            self.conn
-                .execute("DELETE FROM items WHERE id = ?1", params![id])?;
+            tx.execute("DELETE FROM items WHERE id = ?1", params![id])?;
         }
+        tx.commit()?;
         Ok(images)
     }
 }

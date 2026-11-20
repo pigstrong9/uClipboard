@@ -19,7 +19,7 @@ interface Props {
 export function Tabs({ tab, favoriteCount, onChange }: Props) {
   const { t } = useI18n();
   return (
-    <nav className="tabs" aria-label={t('categories')}>
+    <nav className="tabs" aria-label={t('categories')} role="tablist">
       {TABS.map((item) => (
         <button
           key={item.key}

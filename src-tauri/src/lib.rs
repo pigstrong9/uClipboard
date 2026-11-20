@@ -141,14 +141,16 @@ pub fn run() {
             let suppress = Arc::new(Mutex::new(state::Suppression::default()));
             let media_dir = app_dir.clone();
 
-            {
-                let live = if let Ok(store) = store.lock() {
+            let live = store
+                .lock()
+                .map_err(|error| error.to_string())
+                .and_then(|store| {
                     let _ = store.prune(loaded.history_limit, loaded.retention_days);
-                    store.image_paths().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                media::cleanup_orphans(&media_dir, &live);
+                    store.image_paths().map_err(|error| error.to_string())
+                });
+            match live {
+                Ok(live) => media::cleanup_orphans(&media_dir, &live),
+                Err(error) => eprintln!("startup media cleanup skipped: {error}"),
             }
 
             app.manage(state::AppState {

@@ -1,6 +1,6 @@
 export type Language = 'zh-CN' | 'en-US';
 
-const zh: Record<string, string> = {
+const zh = {
   appName: '剪贴板',
   searchPlaceholder: '搜索…',
   toggleTheme: '切换主题',
@@ -121,7 +121,11 @@ const zh: Record<string, string> = {
   aboutDescription: '跨平台开源剪贴板管理器',
 };
 
-const en: Record<string, string> = {
+/// Keys of the Chinese dictionary, which is the source of truth: adding a key there makes
+/// TypeScript require it in `en` instead of silently falling back to Chinese.
+export type TranslationKey = keyof typeof zh;
+
+const en: Record<TranslationKey, string> = {
   appName: 'Clipboard',
   searchPlaceholder: 'Search…',
   toggleTheme: 'Toggle theme',

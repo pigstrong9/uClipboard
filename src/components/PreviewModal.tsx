@@ -14,6 +14,7 @@ interface Props {
 export function PreviewModal({ item, onClose }: Props) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const extra = parseExtra(item.extra);
+  const previewUrl = imageUrl ?? item.thumb_data_url;
   const { t } = useI18n();
 
   useEffect(() => {
@@ -35,10 +36,11 @@ export function PreviewModal({ item, onClose }: Props) {
       <div onClick={(event) => event.stopPropagation()}>
         {item.kind === 'image' && (
           <figure className="preview-image">
-            <img
-              src={imageUrl ?? item.thumb_data_url ?? ''}
-              alt={t('previewImageAlt')}
-            />
+            {previewUrl ? (
+              <img src={previewUrl} alt={t('previewImageAlt')} />
+            ) : (
+              <div className="thumb-placeholder">{t('image')}</div>
+            )}
             <figcaption>
               {extra.width ?? 0} × {extra.height ?? 0}
             </figcaption>

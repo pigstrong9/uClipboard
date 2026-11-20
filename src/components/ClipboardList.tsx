@@ -83,6 +83,8 @@ export function ClipboardList({
     });
   };
 
+  const picked = new Set(selectedIds);
+
   return (
     <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
       {items.map((item, index) => {
@@ -100,7 +102,7 @@ export function ClipboardList({
           <article
             key={item.id}
             className={`item ${selectedId === item.id ? 'selected' : ''} ${
-              selectedIds.includes(item.id) ? 'picked' : ''
+              picked.has(item.id) ? 'picked' : ''
             }`}
             data-id={item.id}
             onClick={() => onSelect(item.id)}

@@ -43,7 +43,7 @@ function TransferCard({
         {item.kind === 'text' && (
           <>
             <div className={`text-preview ${expanded ? 'expanded' : ''}`}>{item.content}</div>
-            {item.content.length > 180 && (
+            {item.size > 180 && (
               <button
                 type="button"
                 className="expand-btn"
