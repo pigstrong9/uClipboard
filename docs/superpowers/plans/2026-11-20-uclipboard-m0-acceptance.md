@@ -31,7 +31,7 @@ node prototypes/serve.js
 - `settings.png`：暗色设置页
 - `transfer.png`：暗色多选 + 临时中转浮窗
 
-说明：验收时 Qoder 内置浏览器面板处于隐藏状态，`take_screenshot` 返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，因此改用本机 Chrome `--headless=new --window-size=880,660` 生成截图；页面结构与交互仍通过 browser-use `evaluate_script` 验证。
+说明：验收时 Qoder 内置浏览器面板处于隐藏状态，`take_screenshot` 返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，因此改用本机 Chrome `--headless=new --window-size=880,660` 生成截图；页面结构与交互仍通过 browser-use `evaluate_script` 验证。`transfer.png` 使用 1600×800 宽画布，展示临时中转窗位于主窗口之外；M0 用页面级固定浮窗模拟，Tauri 版为独立 WebviewWindow。
 
 ## 最终视觉与合规清理
 
@@ -73,7 +73,7 @@ node prototypes/serve.js
 | 按钮栏底部 | 设置、清空历史 |
 | 滚动条位置 | 位于列表右缘、按钮栏左侧 |
 | 多选选择 | 单击条目切换高亮，无需 Shift；按钮徽标显示已选数量 |
-| 临时中转浮窗 | 先高亮条目、再点右栏按钮弹出，含搜索、复制全部、粘贴全部、收藏、移除、清空、关闭 |
+| 临时中转浮窗 | 先高亮条目、再点右栏按钮弹出独立浮层，含图片缩略图、搜索、复制全部、粘贴全部、收藏、移除、清空、关闭 |
 | 多条粘贴 | 粘贴全部后窗口隐藏，临时中转关闭 |
 | 左下角状态 | 监控状态与总条数 |
 
@@ -93,7 +93,7 @@ node prototypes/serve.js
 
 已通过最终收敛形成清爽的简约风格，不依赖任何第三方美术素材。
 
-「临时中转」在 M0 原型中是应用内浮层；Tauri 版将实现为独立置顶小窗，位置贴近主窗口右下角。
+「临时中转」在 M0 原型中用页面级固定浮窗模拟独立窗口；Tauri 版将实现为独立 WebviewWindow，置于主窗口右下角外侧。
 
 与参考产品仍存在的功能差异（有意为之）：
 
