@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uClipboard 原型</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app" id="app">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand">
+          <span class="brand-logo" aria-hidden="true"></span>
+          <span class="brand-name">剪贴板</span>
+          <button class="icon-btn" id="hideBtn" title="隐藏（原型）">×</button>
+        </div>
+        <label class="search" for="searchInput">
+          <span class="search-icon" aria-hidden="true"></span>
+          <input id="searchInput" type="text" placeholder="搜索…" autocomplete="off" />
+        </label>
+        <div class="title-actions">
+          <button class="icon-btn" id="themeBtn" title="切换主题"></button>
+          <button class="icon-btn" id="settingsBtn" title="设置"></button>
+          <button class="icon-btn" id="moreBtn" title="更多"></button>
+        </div>
+      </header>
+      <nav class="tabs" id="tabs" aria-label="分类"></nav>
+      <section class="list" id="list" tabindex="0" aria-label="剪贴板历史"></section>
+      <footer class="statusbar">
+        <span id="statusText">监控中 · 共 0 条</span>
+        <div class="status-actions">
+          <button class="text-btn" id="settingsTextBtn">设置</button>
+          <button class="text-btn danger" id="clearBtn">清空历史</button>
+        </div>
+      </footer>
+    </main>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <div class="modal-backdrop" id="modal" hidden></div>
+    <div class="context-menu" id="contextMenu" hidden></div>
+    <div class="restore-hint" id="restoreHint" hidden>窗口已隐藏（原型）— 点击恢复</div>
+  </body>
+</html>
