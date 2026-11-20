@@ -485,9 +485,13 @@ function renderTransferItem(item) {
         ? '图片'
         : `${item.extra.count} 个文件`;
   const icon = item.kind === 'text' ? ICONS.text : item.kind === 'image' ? ICONS.image : ICONS.files;
+  const visual =
+    item.kind === 'image'
+      ? `<img class="transfer-thumb" src="${item.extra.thumb}" alt="" />`
+      : `<span class="transfer-kind">${icon}</span>`;
 
   return `<div class="transfer-item">
-    <span class="transfer-kind">${icon}</span>
+    ${visual}
     <div class="transfer-text">
       <p>${escapeHtml(preview)}</p>
       <span>${formatRelativeTime(item.updated_at)} · ${meta}</span>
