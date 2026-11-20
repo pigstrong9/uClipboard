@@ -273,6 +273,24 @@ pub fn paste_transfer_item(
     let mut enigo =
         Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
 
+    #[cfg(target_os = "windows")]
+    {
+        let target = app_state
+            .target_hwnd
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+        if let Some(hwnd) = target {
+            if crate::platform::focus_window(hwnd) {
+                std::thread::sleep(std::time::Duration::from_millis(160));
+                if send_paste_shortcut(&mut enigo).is_ok() {
+                    let _ = app.emit("clipboard-changed", ());
+                    return Ok(updated);
+                }
+            }
+        }
+    }
+
     transfer.hide().map_err(|e| e.to_string())?;
     if let Some(main) = &main {
         if main.is_visible().unwrap_or(false) {

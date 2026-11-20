@@ -8,4 +8,5 @@ pub struct AppState {
     pub suppress: Arc<Mutex<Option<String>>>,
     pub media_dir: PathBuf,
     pub transfer_ids: Mutex<Vec<String>>,
+    pub target_hwnd: Mutex<Option<isize>>,
 }
