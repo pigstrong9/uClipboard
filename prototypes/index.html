@@ -26,6 +26,15 @@
       </header>
       <nav class="tabs" id="tabs" aria-label="分类"></nav>
       <section class="list" id="list" tabindex="0" aria-label="剪贴板历史"></section>
+      <div class="settings" id="settings" hidden>
+        <aside class="settings-nav">
+          <button class="active" data-section="basic">基本</button>
+          <button data-section="history">历史</button>
+          <button data-section="privacy">隐私</button>
+          <button data-section="about">关于</button>
+        </aside>
+        <section class="settings-body" id="settingsBody"></section>
+      </div>
       <footer class="statusbar">
         <span id="statusText">监控中 · 共 0 条</span>
         <div class="status-actions">

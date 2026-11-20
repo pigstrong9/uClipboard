@@ -499,3 +499,92 @@ body {
 .restore-hint[hidden] {
   display: none;
 }
+
+.settings {
+  position: absolute;
+  inset: 56px 0 44px;
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  background: var(--bg);
+  z-index: 70;
+}
+
+.settings[hidden] {
+  display: none;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 10px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-nav button.active {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.settings-body {
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.settings-body h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.setting-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.setting-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.setting-list strong {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.theme-row {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.theme-row select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 4px 8px;
+  font: inherit;
+}
