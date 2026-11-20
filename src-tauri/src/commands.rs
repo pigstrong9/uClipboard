@@ -415,12 +415,12 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn copy_item(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
+pub async fn copy_item(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
     write_item_to_clipboard(state.inner(), &id)
 }
 
 #[tauri::command]
-pub fn paste_item(
+pub async fn paste_item(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
@@ -449,7 +449,7 @@ pub fn paste_item(
 }
 
 #[tauri::command]
-pub fn paste_transfer_item(
+pub async fn paste_transfer_item(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
@@ -550,7 +550,10 @@ pub fn transfer_items(state: State<'_, AppState>) -> Result<Vec<ClipItem>, Strin
 }
 
 #[tauri::command]
-pub fn copy_transfer(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
+pub async fn copy_transfer(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
     let app_state = state.inner();
     let ids = app_state
         .transfer_ids

@@ -3,7 +3,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
+use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
+use image::{ExtendedColorType, GenericImageView, ImageEncoder, ImageFormat, Rgba, RgbaImage};
 
 pub struct SavedImage {
     pub rel_path: String,
@@ -101,11 +102,11 @@ pub fn merge_images_vertical(paths: &[PathBuf]) -> Result<Vec<u8>, String> {
         y += image.height() as i64 + GAP as i64;
     }
 
-    let mut buffer = Cursor::new(Vec::new());
-    canvas
-        .write_to(&mut buffer, ImageFormat::Png)
+    let mut buffer = Vec::new();
+    PngEncoder::new_with_quality(&mut buffer, CompressionType::Fast, PngFilterType::NoFilter)
+        .write_image(canvas.as_raw(), width, height, ExtendedColorType::Rgba8)
         .map_err(|error| error.to_string())?;
-    Ok(buffer.into_inner())
+    Ok(buffer)
 }
 
 #[cfg(test)]
