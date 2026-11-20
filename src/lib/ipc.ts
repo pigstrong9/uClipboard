@@ -1,0 +1,44 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+
+import type { ClipItem, TabKey } from './types';
+
+export function listItems(tab: TabKey, query: string) {
+  return invoke<ClipItem[]>('list_items', { tab, query });
+}
+
+export function toggleFavorite(id: string) {
+  return invoke<ClipItem>('toggle_favorite', { id });
+}
+
+export function togglePin(id: string) {
+  return invoke<ClipItem>('toggle_pin', { id });
+}
+
+export function deleteItem(id: string) {
+  return invoke<void>('delete_item', { id });
+}
+
+export function clearItems() {
+  return invoke<void>('clear_items');
+}
+
+export function copyItem(id: string) {
+  return invoke<ClipItem>('copy_item', { id });
+}
+
+export function stats() {
+  return invoke<number>('stats');
+}
+
+export function favoriteCount() {
+  return invoke<number>('favorite_count');
+}
+
+export function imageDataUrl(id: string) {
+  return invoke<string>('image_data_url', { id });
+}
+
+export function onClipboardChanged(callback: () => void): Promise<UnlistenFn> {
+  return listen('clipboard-changed', () => callback());
+}
