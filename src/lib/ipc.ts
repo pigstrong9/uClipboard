@@ -43,6 +43,30 @@ export function imageDataUrl(id: string) {
   return invoke<string>('image_data_url', { id });
 }
 
+export function openTransfer(ids: string[]) {
+  return invoke<ClipItem[]>('open_transfer', { ids });
+}
+
+export function transferItems() {
+  return invoke<ClipItem[]>('transfer_items');
+}
+
+export function copyTransfer() {
+  return invoke<number>('copy_transfer');
+}
+
+export function favoriteTransfer() {
+  return invoke<boolean>('favorite_transfer');
+}
+
+export function closeTransfer() {
+  return invoke<void>('close_transfer');
+}
+
 export function onClipboardChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('clipboard-changed', () => callback());
+}
+
+export function onTransferChanged(callback: () => void): Promise<UnlistenFn> {
+  return listen('transfer-changed', () => callback());
 }

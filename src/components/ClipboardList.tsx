@@ -7,6 +7,7 @@ import { parseExtra, parseFiles, type ClipItem } from '../lib/types';
 interface Props {
   items: ClipItem[];
   selectedId: string | null;
+  selectedIds: string[];
   loading: boolean;
   onSelect: (id: string) => void;
   onCopy: (id: string) => void;
@@ -18,6 +19,7 @@ interface Props {
 export function ClipboardList({
   items,
   selectedId,
+  selectedIds,
   loading,
   onSelect,
   onCopy,
@@ -79,7 +81,9 @@ export function ClipboardList({
         return (
           <article
             key={item.id}
-            className={`item ${selectedId === item.id ? 'selected' : ''}`}
+            className={`item ${selectedId === item.id ? 'selected' : ''} ${
+              selectedIds.includes(item.id) ? 'picked' : ''
+            }`}
             data-id={item.id}
             onClick={() => onSelect(item.id)}
             onDoubleClick={() => onPaste(item.id)}

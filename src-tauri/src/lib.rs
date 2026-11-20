@@ -38,6 +38,7 @@ pub fn run() {
                 store: store.clone(),
                 suppress: suppress.clone(),
                 media_dir: media_dir.clone(),
+                transfer_ids: Mutex::new(Vec::new()),
             });
 
             let handle = app.handle().clone();
@@ -90,6 +91,8 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            show_main(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -101,6 +104,11 @@ pub fn run() {
             commands::clear_items,
             commands::copy_item,
             commands::paste_item,
+            commands::open_transfer,
+            commands::transfer_items,
+            commands::copy_transfer,
+            commands::favorite_transfer,
+            commands::close_transfer,
             commands::stats,
             commands::favorite_count,
             commands::image_data_url
