@@ -54,6 +54,7 @@ const state = {
   transferOpen: false,
   transferIds: new Set(),
   transferQuery: '',
+  transferSearchOpen: false,
 };
 
 const TABS = [
@@ -429,6 +430,7 @@ function openTransferPanel() {
   toAdd.forEach((item) => state.transferIds.add(item.id));
   state.transferOpen = true;
   state.transferQuery = '';
+  state.transferSearchOpen = false;
   renderAll();
 }
 
@@ -437,6 +439,7 @@ function closeTransferPanel() {
   state.transferIds.clear();
   state.selectedIds.clear();
   state.transferQuery = '';
+  state.transferSearchOpen = false;
   renderAll();
 }
 
@@ -446,18 +449,6 @@ function copyTransfer() {
   items.forEach((item) => touchItem(item.id));
   renderAll();
   toast(`已复制 ${items.length} 条`);
-}
-
-function pasteTransfer() {
-  const items = transferItems();
-  if (!items.length) return;
-  items.forEach((item) => touchItem(item.id));
-  state.transferOpen = false;
-  state.transferIds.clear();
-  state.transferQuery = '';
-  renderAll();
-  toast(`已粘贴 ${items.length} 条（原型）`);
-  hideWindow();
 }
 
 function favoriteTransfer() {
@@ -471,33 +462,40 @@ function favoriteTransfer() {
   toast(allFavorite ? '已取消收藏' : '已收藏');
 }
 
-function renderTransferItem(item) {
-  const preview =
-    item.kind === 'text'
-      ? item.content.replace(/\s+/g, ' ').slice(0, 80)
-      : item.kind === 'image'
-        ? `${item.extra.width} × ${item.extra.height} 图片`
-        : item.preview;
+function renderTransferCard(item, index) {
   const meta =
     item.kind === 'text'
       ? `${item.size} 字符`
       : item.kind === 'image'
-        ? '图片'
+        ? `${item.extra.width} × ${item.extra.height}`
         : `${item.extra.count} 个文件`;
-  const icon = item.kind === 'text' ? ICONS.text : item.kind === 'image' ? ICONS.image : ICONS.files;
-  const visual =
-    item.kind === 'image'
-      ? `<img class="transfer-thumb" src="${item.extra.thumb}" alt="" />`
-      : `<span class="transfer-kind">${icon}</span>`;
 
-  return `<div class="transfer-item">
-    ${visual}
-    <div class="transfer-text">
-      <p>${escapeHtml(preview)}</p>
-      <span>${formatRelativeTime(item.updated_at)} · ${meta}</span>
+  let body = '';
+  if (item.kind === 'text') {
+    const expanded = state.expanded.has(item.id);
+    body = `<div class="text-preview ${expanded ? 'expanded' : ''}">${escapeHtml(item.content)}</div>
+      ${item.content.length > 180 ? `<button class="expand-btn" data-transfer-expand="${item.id}">${expanded ? '收起' : '展开'}</button>` : ''}`;
+  } else if (item.kind === 'image') {
+    body = `<div class="image-preview"><img src="${item.extra.thumb}" alt="剪贴板图片" /></div>
+      <div class="transfer-expand"><button data-transfer-preview="${item.id}">展开</button></div>`;
+  } else {
+    const files = item.content.slice(0, 4);
+    body = `<ul class="file-list">${files
+      .map((file) => {
+        const name = file.split(/[\\/]/).pop();
+        return `<li><span class="file-icon">${ICONS.file}</span><span class="file-name">${escapeHtml(name)}</span></li>`;
+      })
+      .join('')}</ul>`;
+  }
+
+  return `<article class="item transfer-card ${index === 0 ? 'active' : ''}" data-transfer-card="${item.id}">
+    <div class="item-main">${body}</div>
+    <div class="item-meta">
+      <span class="transfer-source">临时中转</span>
+      <span class="item-size">${meta}</span>
+      <span class="item-index">${index + 1}</span>
     </div>
-    <button class="transfer-remove" data-transfer-remove="${item.id}" title="移出">×</button>
-  </div>`;
+  </article>`;
 }
 
 function renderTransfer() {
@@ -521,65 +519,69 @@ function renderTransfer() {
   panel.hidden = false;
   panel.innerHTML = `
     <div class="transfer-head">
-      <span class="transfer-pin">${ICONS.pin}</span>
-      <span class="transfer-title">临时中转${total ? ` · ${total}` : ''}</span>
+      <span class="transfer-pin" title="固定窗口">${ICONS.pin}</span>
       <button class="icon-btn" data-transfer-action="copy" title="复制全部" ${total ? '' : 'disabled'}>${ICONS.copy}</button>
       <button class="icon-btn" data-transfer-action="favorite" title="收藏全部" ${total ? '' : 'disabled'}>${ICONS.star}</button>
+      <span class="transfer-spacer"></span>
       <button class="icon-btn" data-transfer-action="search" title="搜索">${ICONS.search}</button>
       <button class="icon-btn" data-transfer-action="close" title="关闭">${ICONS.close}</button>
     </div>
-    <div class="transfer-search">
-      <input id="transferSearch" type="text" placeholder="在中转内容中搜索…" value="${escapeHtml(state.transferQuery)}" />
-    </div>
+    ${
+      state.transferSearchOpen
+        ? `<div class="transfer-search"><input id="transferSearch" type="text" placeholder="在中转内容中搜索…" value="${escapeHtml(state.transferQuery)}" /></div>`
+        : ''
+    }
     <div class="transfer-body">
       ${
         items.length
-          ? items.map(renderTransferItem).join('')
+          ? items.map(renderTransferCard).join('')
           : `<div class="transfer-empty">${total ? '没有匹配的内容' : '先在列表中选择条目，再点击中转按钮'}</div>`
       }
-    </div>
-    <div class="transfer-foot">
-      <button class="transfer-btn" data-transfer-action="clear" ${total ? '' : 'disabled'}>清空</button>
-      <button class="transfer-btn" data-transfer-action="copy" ${total ? '' : 'disabled'}>复制全部</button>
-      <button class="transfer-btn primary" data-transfer-action="paste" ${total ? '' : 'disabled'}>粘贴全部</button>
     </div>`;
 
   transferBtn.dataset.count = String(total);
   transferBtn.classList.add('active');
+  if (state.transferSearchOpen) {
+    const input = document.getElementById('transferSearch');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
 }
 
 const transferPanelEl = document.getElementById('transferPanel');
 transferPanelEl.addEventListener('click', (event) => {
-  const remove = event.target.closest('[data-transfer-remove]');
-  if (remove) {
-    state.transferIds.delete(remove.dataset.transferRemove);
-    renderAll();
+  const expand = event.target.closest('[data-transfer-expand]');
+  if (expand) {
+    const id = expand.dataset.transferExpand;
+    state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+    renderTransfer();
+    return;
+  }
+  const preview = event.target.closest('[data-transfer-preview]');
+  if (preview) {
+    const item = findItem(preview.dataset.transferPreview);
+    if (item) openPreview(item);
     return;
   }
   const action = event.target.closest('[data-transfer-action]');
   if (!action) return;
   const name = action.dataset.transferAction;
   if (name === 'copy') return copyTransfer();
-  if (name === 'paste') return pasteTransfer();
   if (name === 'favorite') return favoriteTransfer();
   if (name === 'close') return closeTransferPanel();
-  if (name === 'clear') {
-    state.transferIds.clear();
-    renderAll();
-    return;
+  if (name === 'search') {
+    state.transferSearchOpen = !state.transferSearchOpen;
+    if (!state.transferSearchOpen) state.transferQuery = '';
+    renderTransfer();
   }
-  if (name === 'search') document.getElementById('transferSearch')?.focus();
 });
 
 transferPanelEl.addEventListener('input', (event) => {
   if (event.target.id !== 'transferSearch') return;
   state.transferQuery = event.target.value;
   renderTransfer();
-  const input = document.getElementById('transferSearch');
-  if (input) {
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-  }
 });
 
 document.addEventListener('keydown', (event) => {
