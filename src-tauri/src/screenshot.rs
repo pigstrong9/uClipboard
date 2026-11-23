@@ -135,10 +135,22 @@ async fn start(app: AppHandle) -> Result<(), String> {
         }
     });
 
-    // Show immediately so Esc still works if the PNG is slow to load; the overlay
-    // displays a preparing hint until the image onLoad fires.
-    let _ = window.show();
-    let _ = window.set_focus();
+    // Keep the overlay hidden until the frontend confirms the capture image has
+    // loaded. Showing it earlier paints a black fullscreen surface (body background
+    // plus dim layer) ahead of the image, which reads as a screen flash to black.
+    // A bounded fallback still reveals the window so Esc stays usable if the image
+    // is slow or the webview never reports back.
+    let fallback = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        if let Some(window) = fallback.get_webview_window(WINDOW) {
+            if window.is_visible().unwrap_or(false) {
+                return;
+            }
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    });
     Ok(())
 }
 

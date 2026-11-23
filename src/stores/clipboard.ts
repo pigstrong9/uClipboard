@@ -14,6 +14,7 @@ interface ClipboardState {
   favoriteCount: number;
   totalCount: number;
   load: () => Promise<void>;
+  resetView: () => void;
   setTab: (tab: TabKey) => void;
   setQuery: (query: string) => void;
   select: (id: string | null) => void;
@@ -59,6 +60,11 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
       if (seq !== requestSeq) return;
       set({ loading: false, error: String(error) });
     }
+  },
+
+  resetView: () => {
+    set({ tab: 'all', query: '', selectedId: null, selectedIds: [], loading: true });
+    void get().load();
   },
 
   setTab: (tab) => {

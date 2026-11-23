@@ -32,11 +32,11 @@ export default function App() {
   const favoriteCount = useClipboard((state) => state.favoriteCount);
   const totalCount = useClipboard((state) => state.totalCount);
   const load = useClipboard((state) => state.load);
+  const resetView = useClipboard((state) => state.resetView);
   const setTab = useClipboard((state) => state.setTab);
   const setQuery = useClipboard((state) => state.setQuery);
   const select = useClipboard((state) => state.select);
   const toggleSelection = useClipboard((state) => state.toggleSelection);
-  const clearSelection = useClipboard((state) => state.clearSelection);
   const openTransfer = useClipboard((state) => state.openTransfer);
   const toggleFavorite = useClipboard((state) => state.toggleFavorite);
   const togglePin = useClipboard((state) => state.togglePin);
@@ -92,9 +92,7 @@ export default function App() {
         setSearch('');
         setSettingsOpen(false);
         setPreviewItem(null);
-        clearSelection();
-        select(null);
-        setQuery('');
+        resetView();
         inputRef.current?.focus();
       }),
     );
@@ -110,7 +108,7 @@ export default function App() {
       disposed = true;
       disposers.forEach((dispose) => dispose());
     };
-  }, [load, toast, t, clearSelection, setQuery]);
+  }, [load, toast, t, resetView]);
 
   useEffect(() => {
     if (!error) return;

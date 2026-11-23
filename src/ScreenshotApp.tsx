@@ -32,7 +32,11 @@ export default function ScreenshotApp() {
         if (!cancelled) setSession(value);
       })
       .catch((cause) => {
-        if (!cancelled) setError(errorText(t, cause));
+        if (!cancelled) {
+          setError(errorText(t, cause));
+          // Reveal the overlay so the error is visible and Esc can dismiss it.
+          void ipc.screenshotReady().catch(() => undefined);
+        }
       });
     return () => {
       cancelled = true;
@@ -148,7 +152,10 @@ export default function ScreenshotApp() {
             setReady(true);
             void ipc.screenshotReady().catch(() => undefined);
           }}
-          onError={() => setError(t('screenshotFailed'))}
+          onError={() => {
+            setError(t('screenshotFailed'));
+            void ipc.screenshotReady().catch(() => undefined);
+          }}
         />
       )}
 

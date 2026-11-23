@@ -71,4 +71,23 @@ describe('clipboard store', () => {
 
     expect(useClipboard.getState().selectedId).toBeNull();
   });
+
+  it('resetView returns to the all tab and issues a single reload', async () => {
+    useClipboard.setState({
+      tab: 'favorite',
+      query: 'abc',
+      selectedId: 'a',
+      selectedIds: ['a', 'b'],
+    });
+
+    useClipboard.getState().resetView();
+
+    const state = useClipboard.getState();
+    expect(state.tab).toBe('all');
+    expect(state.query).toBe('');
+    expect(state.selectedId).toBeNull();
+    expect(state.selectedIds).toEqual([]);
+    await vi.waitFor(() => expect(ipc.listItems).toHaveBeenCalledWith('all', ''));
+    expect(ipc.listItems).toHaveBeenCalledTimes(1);
+  });
 });

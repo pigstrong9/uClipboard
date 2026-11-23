@@ -18,3 +18,4 @@ Thumbs.db
 *.crt
 
 .trash-local/
+.workbuddy/
