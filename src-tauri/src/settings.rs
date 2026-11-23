@@ -8,6 +8,7 @@ use crate::models::ClipKind;
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub hotkey: String,
+    pub screenshot_hotkey: String,
     pub auto_start: bool,
     pub hide_on_blur: bool,
     pub theme: String,
@@ -30,6 +31,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: "Alt+V".to_string(),
+            screenshot_hotkey: "Alt+A".to_string(),
             auto_start: !cfg!(debug_assertions),
             hide_on_blur: true,
             theme: "system".to_string(),
@@ -56,6 +58,10 @@ impl Settings {
         self.hotkey = self.hotkey.trim().to_string();
         if self.hotkey.is_empty() {
             self.hotkey = defaults.hotkey;
+        }
+        self.screenshot_hotkey = self.screenshot_hotkey.trim().to_string();
+        if self.screenshot_hotkey.is_empty() {
+            self.screenshot_hotkey = defaults.screenshot_hotkey;
         }
         if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
             self.theme = defaults.theme;
@@ -85,6 +91,10 @@ impl Settings {
         }
         self.ignored_apps = apps;
         self
+    }
+
+    pub fn hotkeys_conflict(&self) -> bool {
+        self.screenshot_hotkey.eq_ignore_ascii_case(&self.hotkey)
     }
 
     pub fn allows(&self, kind: ClipKind) -> bool {
@@ -134,11 +144,30 @@ pub fn load(path: &Path) -> Settings {
 }
 
 pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {
+    use std::io::Write;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let raw = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    std::fs::write(path, raw).map_err(|error| error.to_string())
+    // Write beside the target and rename, so a crash mid-write cannot leave a truncated
+    // config.json behind (rename replaces the old file atomically on all targets).
+    let temp = path.with_extension("json.tmp");
+    let write = (|| -> Result<(), String> {
+        let mut file = std::fs::File::create(&temp).map_err(|error| error.to_string())?;
+        file.write_all(raw.as_bytes())
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())
+    })();
+    if let Err(error) = write {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -171,6 +200,28 @@ mod tests {
         assert_eq!(settings.retention_days, 0);
         assert_eq!(settings.min_text_length, 1);
         assert_eq!(settings.ignored_apps.len(), 2);
+    }
+
+    #[test]
+    fn defaults_and_normalizes_screenshot_hotkey() {
+        assert_eq!(Settings::default().screenshot_hotkey, "Alt+A");
+        let settings = Settings {
+            screenshot_hotkey: "  ".to_string(),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(settings.screenshot_hotkey, "Alt+A");
+    }
+
+    #[test]
+    fn detects_conflicting_hotkeys() {
+        let settings = Settings {
+            hotkey: "Alt+A".to_string(),
+            screenshot_hotkey: "alt+a".to_string(),
+            ..Settings::default()
+        };
+        assert!(settings.hotkeys_conflict());
+        assert!(!Settings::default().hotkeys_conflict());
     }
 
     #[test]

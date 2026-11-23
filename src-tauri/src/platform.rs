@@ -69,7 +69,7 @@ pub fn foreground_target() -> Option<isize> {
 #[cfg(target_os = "windows")]
 pub fn focus_window(hwnd: isize) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
+        IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
 
     // SAFETY: `hwnd` came from foreground_target and is revalidated by IsWindow before use,
@@ -79,28 +79,29 @@ pub fn focus_window(hwnd: isize) -> bool {
         if IsWindow(target) == 0 || IsWindowVisible(target) == 0 {
             return false;
         }
-        ShowWindow(target, SW_RESTORE);
+        // SW_RESTORE also resets a maximized window to its restored size, so only call it
+        // when the target is actually minimized; otherwise just raise it.
+        if IsIconic(target) != 0 {
+            ShowWindow(target, SW_RESTORE);
+        }
         SetForegroundWindow(target) != 0
     }
 }
 
 #[cfg(target_os = "windows")]
-pub fn foreground_app_name() -> Option<String> {
+fn process_name_for_window(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<String> {
     use std::path::Path;
 
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
     // SAFETY: the buffer stays alive and is sized by `buffer.len()`, which is also the
     // capacity handed to the API; `size` comes back as the number of UTF-16 units written,
     // so slicing by it stays in bounds. The process handle is closed on every path.
     unsafe {
-        let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
             return None;
         }
@@ -126,6 +127,25 @@ pub fn foreground_app_name() -> Option<String> {
             .and_then(|name| name.to_str())
             .map(|name| name.to_string())
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn foreground_app_name() -> Option<String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: takes no arguments and returns either null or a live window handle, which
+    // `process_name_for_window` validates before use.
+    let hwnd = unsafe { GetForegroundWindow() };
+    process_name_for_window(hwnd)
+}
+
+/// Process that placed the current clipboard content, which is a better ignore-list
+/// signal than whatever happens to be focused when the poll runs.
+#[cfg(target_os = "windows")]
+pub fn clipboard_owner_app_name() -> Option<String> {
+    use windows_sys::Win32::System::DataExchange::GetClipboardOwner;
+    // SAFETY: returns the clipboard owner window (possibly null); the handle is only read.
+    let owner = unsafe { GetClipboardOwner() };
+    process_name_for_window(owner).or_else(foreground_app_name)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -214,8 +234,57 @@ pub fn foreground_app_name() -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+pub fn clipboard_owner_app_name() -> Option<String> {
+    foreground_app_name()
+}
+
+/// A revision that changes whenever the system clipboard changes.
+///
+/// Windows has `GetClipboardSequenceNumber`; elsewhere clipboard-rs already owns the
+/// platform watcher (NSPasteboard `changeCount` on macOS, XFixes events on X11), so the
+/// watcher only increments a counter instead of decoding content on every poll.
+#[cfg(not(target_os = "windows"))]
 pub fn clipboard_sequence() -> Option<u32> {
-    None
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
+
+    use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
+
+    struct ChangeCounter(Arc<AtomicU32>);
+
+    impl ClipboardHandler for ChangeCounter {
+        fn on_clipboard_change(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    // `None` means the watcher could not be created; the monitor then falls back to
+    // reading every poll instead of stalling with a counter that never advances.
+    static WATCHER: OnceLock<Option<Arc<AtomicU32>>> = OnceLock::new();
+    static WATCHER_FAILED: AtomicBool = AtomicBool::new(false);
+    let counter = WATCHER.get_or_init(|| {
+        let counter = Arc::new(AtomicU32::new(0));
+        let mut watcher =
+            ClipboardWatcherContext::new_with_interval(Duration::from_millis(150)).ok()?;
+        watcher.add_handler(ChangeCounter(Arc::clone(&counter)));
+        std::thread::spawn(move || {
+            // `start_watch` blocks for the life of the process. Returning (or panicking,
+            // e.g. when XFixes is missing) means notifications are gone, so report the
+            // watcher as failed and let the monitor go back to polling.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                watcher.start_watch();
+            }));
+            WATCHER_FAILED.store(true, Ordering::Relaxed);
+        });
+        Some(counter)
+    });
+    if WATCHER_FAILED.load(Ordering::Relaxed) {
+        return None;
+    }
+    counter
+        .as_ref()
+        .map(|counter| counter.load(Ordering::Relaxed))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -239,7 +308,7 @@ pub fn set_clipboard_image_png(png: &[u8]) -> bool {
     // 2835 px/metre is the value Windows itself writes for 72 dpi bitmaps.
     const PIXELS_PER_METRE: u32 = 2835;
 
-    let Ok(image) = image::load_from_memory(png) else {
+    let Ok(image) = crate::media::decode_image_limited(png) else {
         return false;
     };
     let rgba = image.to_rgba8();
@@ -411,5 +480,81 @@ pub fn send_paste_keys() -> bool {
         let control_up = [key(VK_CONTROL, true)];
         let released = SendInput(1, control_up.as_ptr(), size) == 1;
         v_ok && released
+    }
+}
+
+/// macOS synthesizes `Cmd+V` through the accessibility API, which the user must allow
+/// explicitly. `None` means the platform has no such permission model.
+#[cfg(target_os = "macos")]
+pub fn accessibility_trusted() -> Option<bool> {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> u8;
+    }
+    // SAFETY: the function takes no arguments and only reads the process trust state.
+    Some(unsafe { AXIsProcessTrusted() != 0 })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn accessibility_trusted() -> Option<bool> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+pub fn open_accessibility_settings() -> bool {
+    std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_accessibility_settings() -> bool {
+    false
+}
+
+/// Opens a directory in the platform file manager.
+pub fn open_path(path: &std::path::Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .is_ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(path).spawn().is_ok()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .is_ok()
+    }
+}
+
+/// Deactivates the whole application (not just a window) before synthesizing Cmd+V, so
+/// the keystroke goes to the app the user was working in. Must run on the main thread.
+#[cfg(target_os = "macos")]
+pub fn hide_app() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = MainThreadMarker::new() {
+        let app = NSApplication::sharedApplication(mtm);
+        app.hide(None);
+    }
+}
+
+/// Brings the application back after a transfer-window paste.
+#[cfg(target_os = "macos")]
+pub fn show_app() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = MainThreadMarker::new() {
+        let app = NSApplication::sharedApplication(mtm);
+        app.unhide(None);
+        app.activate();
     }
 }

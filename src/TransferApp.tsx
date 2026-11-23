@@ -1,7 +1,9 @@
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Toast } from './components/Toast';
-import { baseName } from './lib/format';
+import { errorText } from './lib/errors';
+import { baseName, plural } from './lib/format';
 import { Icon } from './lib/icons';
 import * as ipc from './lib/ipc';
 import { useI18n } from './lib/useI18n';
@@ -26,12 +28,13 @@ function TransferCard({
   const { t } = useI18n();
   const extra = parseExtra(item.extra);
   const files = item.kind === 'files' ? parseFiles(item.content) : [];
+  const thumb = item.thumb_path ? convertFileSrc(item.thumb_path) : null;
   const meta =
     item.kind === 'text'
-      ? t('chars', { n: item.size })
+      ? plural(t, 'chars', item.size)
       : item.kind === 'image'
         ? `${extra.width ?? 0} × ${extra.height ?? 0}`
-        : t('filesCount', { n: extra.count ?? files.length });
+        : plural(t, 'filesCount', extra.count ?? files.length);
 
   return (
     <article
@@ -56,8 +59,13 @@ function TransferCard({
         )}
         {item.kind === 'image' && (
           <div className="image-preview">
-            {item.thumb_data_url ? (
-              <img src={item.thumb_data_url} alt={t('previewImageAlt')} />
+            {thumb ? (
+              <img
+                src={thumb}
+                alt={t('previewImageAlt')}
+                loading="lazy"
+                decoding="async"
+              />
             ) : (
               <div className="thumb-placeholder">{t('image')}</div>
             )}
@@ -103,7 +111,7 @@ export default function TransferApp() {
       const data = await ipc.transferItems();
       setItems(data);
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     } finally {
       setLoading(false);
     }
@@ -112,17 +120,36 @@ export default function TransferApp() {
   useEffect(() => {
     void initSettings();
     void load();
-    let unlisten: (() => void) | undefined;
-    ipc
-      .onTransferChanged(() => {
+    const disposers: Array<() => void> = [];
+    let disposed = false;
+    const bind = (promise: Promise<() => void>) => {
+      promise
+        .then((unlisten) => {
+          if (disposed) unlisten();
+          else disposers.push(unlisten);
+        })
+        .catch(() => undefined);
+    };
+
+    bind(
+      ipc.onTransferChanged(() => {
         void load();
-      })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => undefined);
+      }),
+    );
+    bind(
+      ipc.onTransferOpened(() => {
+        // The window is hidden rather than destroyed between uses, so clear the state
+        // that would otherwise filter or expand the new batch of items.
+        setSearchOpen(false);
+        setSearch('');
+        setExpanded(new Set());
+        void load();
+      }),
+    );
+
     return () => {
-      unlisten?.();
+      disposed = true;
+      disposers.forEach((dispose) => dispose());
     };
   }, [initSettings]);
 
@@ -145,9 +172,9 @@ export default function TransferApp() {
     setCopying(true);
     try {
       const count = await ipc.copyTransfer();
-      toast(t('copiedCount', { n: count }));
+      toast(plural(t, 'copiedCount', count));
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     } finally {
       setCopying(false);
     }
@@ -160,7 +187,7 @@ export default function TransferApp() {
       toast(favorited ? t('favoriteAdded') : t('favoriteRemoved'));
       await load();
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     }
   };
 
@@ -168,7 +195,7 @@ export default function TransferApp() {
     try {
       await ipc.closeTransfer();
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     }
   };
 
@@ -186,7 +213,7 @@ export default function TransferApp() {
       await ipc.pasteTransferItem(id);
       toast(t('pasted'));
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     }
   };
 

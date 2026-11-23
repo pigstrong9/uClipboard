@@ -1,7 +1,9 @@
 import { useEffect, useState, type FocusEvent } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 
+import { errorText } from '../lib/errors';
 import * as ipc from '../lib/ipc';
+import { HotkeyRecorder } from './HotkeyRecorder';
 import { Icon } from '../lib/icons';
 import { useI18n } from '../lib/useI18n';
 import type { Settings, UpdateInfo } from '../lib/types';
@@ -34,22 +36,14 @@ export function SettingsView({ onClose }: Props) {
   const toast = useUi((state) => state.toast);
   const ask = useUi((state) => state.ask);
   const [section, setSection] = useState<Section>('basic');
-  const [hotkey, setHotkey] = useState('');
   const [ignored, setIgnored] = useState('');
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [accessibility, setAccessibility] = useState<boolean | null>(null);
 
-  const persistedHotkey = settings?.hotkey;
   const persistedIgnored = settings?.ignoredApps.join('\n');
-
-  // Sync from the persisted value, not from the settings object: an unrelated toggle
-  // reloads settings and would otherwise discard what the user is typing here.
-  useEffect(() => {
-    if (persistedHotkey === undefined) return;
-    setHotkey(persistedHotkey);
-  }, [persistedHotkey]);
 
   useEffect(() => {
     if (persistedIgnored === undefined) return;
@@ -62,12 +56,19 @@ export function SettingsView({ onClose }: Props) {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    ipc
+      .accessibilityStatus()
+      .then(setAccessibility)
+      .catch(() => setAccessibility(null));
+  }, []);
+
   const commit = async (patch: Partial<Settings>, message?: string) => {
     try {
       await save(patch);
       if (message) toast(message);
     } catch (error) {
-      toast(String(error));
+      toast(errorText(t, error));
     }
   };
 
@@ -127,7 +128,7 @@ export function SettingsView({ onClose }: Props) {
         toast(t('upToDate'));
       }
     } catch (error) {
-      toast(t('updateFailed', { error: String(error) }));
+      toast(t('updateFailed', { error: errorText(t, error) }));
     } finally {
       setChecking(false);
     }
@@ -138,7 +139,7 @@ export function SettingsView({ onClose }: Props) {
     try {
       await ipc.installUpdate();
     } catch (error) {
-      toast(t('updateFailed', { error: String(error) }));
+      toast(t('updateFailed', { error: errorText(t, error) }));
       setInstalling(false);
     }
   };
@@ -151,7 +152,7 @@ export function SettingsView({ onClose }: Props) {
           .getState()
           .clear()
           .then(() => toast(t('allDataCleared')))
-          .catch((cause) => toast(String(cause)));
+          .catch((cause) => toast(errorText(t, cause)));
       },
     });
   };
@@ -206,24 +207,39 @@ export function SettingsView({ onClose }: Props) {
                 <strong>{t('basicHotkey')}</strong>
                 <span className="settings-note">{t('basicHotkeyNote')}</span>
               </div>
-              <div className="settings-inline">
-                <input
-                  className="settings-input"
-                  value={hotkey}
-                  onChange={(event) => setHotkey(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void commit({ hotkey }, t('hotkeySaved'));
-                  }}
-                />
-                <button
-                  type="button"
-                  className="settings-button"
-                  onClick={() => void commit({ hotkey }, t('hotkeySaved'))}
-                >
-                  {t('apply')}
-                </button>
-              </div>
+              <HotkeyRecorder
+                value={settings.hotkey}
+                onCommit={(hotkey) => void commit({ hotkey }, t('hotkeySaved'))}
+              />
             </div>
+
+            <div className="setting-row setting-stack">
+              <div>
+                <strong>{t('screenshotHotkey')}</strong>
+                <span className="settings-note">{t('screenshotHotkeyNote')}</span>
+              </div>
+              <HotkeyRecorder
+                value={settings.screenshotHotkey}
+                onCommit={(screenshotHotkey) =>
+                  void commit({ screenshotHotkey }, t('hotkeySaved'))
+                }
+              />
+            </div>
+
+            {accessibility === false && (
+              <div className="setting-row setting-stack">
+                <span className="settings-note">{t('accessibilityNote')}</span>
+                <div className="settings-inline">
+                  <button
+                    type="button"
+                    className="settings-button"
+                    onClick={() => void ipc.openAccessibilitySettings()}
+                  >
+                    {t('openAccessibilitySettings')}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <label className="setting-row">
               <span>{t('autoStart')}</span>
@@ -453,6 +469,17 @@ export function SettingsView({ onClose }: Props) {
                 {t('updateFound', { version: update.version })}
               </p>
             )}
+            <div className="settings-inline">
+              <button
+                type="button"
+                className="settings-button"
+                onClick={() => {
+                  void ipc.openLogsDir().catch((error) => toast(errorText(t, error)));
+                }}
+              >
+                {t('openLogsDir')}
+              </button>
+            </div>
           </div>
         )}
       </div>

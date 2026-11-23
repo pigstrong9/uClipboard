@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 
 import * as ipc from '../lib/ipc';
-import type { ClipItem, TabKey } from '../lib/types';
+import type { ClipSummary, TabKey } from '../lib/types';
 
 interface ClipboardState {
-  items: ClipItem[];
+  items: ClipSummary[];
   tab: TabKey;
   query: string;
   loading: boolean;
@@ -63,7 +63,7 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
   },
 
   setTab: (tab) => {
-    set({ tab, selectedId: null, loading: true });
+    set({ tab, selectedId: null, selectedIds: [], loading: true });
     void get().load();
   },
 

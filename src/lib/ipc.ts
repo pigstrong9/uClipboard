@@ -1,10 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { ClipItem, Settings, TabKey, UpdateInfo } from './types';
+import type {
+  ClipItem,
+  ClipSummary,
+  ScreenshotSession,
+  Settings,
+  TabKey,
+  UpdateInfo,
+} from './types';
 
 export function listItems(tab: TabKey, query: string) {
-  return invoke<ClipItem[]>('list_items', { tab, query });
+  return invoke<ClipSummary[]>('list_items', { tab, query });
+}
+
+export function getItem(id: string) {
+  return invoke<ClipItem>('get_item', { id });
 }
 
 export function toggleFavorite(id: string) {
@@ -83,6 +94,42 @@ export function hideMain() {
   return invoke<void>('hide_main');
 }
 
+export function accessibilityStatus() {
+  return invoke<boolean | null>('accessibility_status');
+}
+
+export function openAccessibilitySettings() {
+  return invoke<boolean>('open_accessibility_settings');
+}
+
+export function openLogsDir() {
+  return invoke<void>('open_logs_dir');
+}
+
+export function screenshotSession() {
+  return invoke<ScreenshotSession>('screenshot_session');
+}
+
+export function screenshotReady() {
+  return invoke<void>('screenshot_ready');
+}
+
+export function captureRegion(x: number, y: number, width: number, height: number) {
+  return invoke<void>('capture_region', { x, y, width, height });
+}
+
+export function cancelRegionCapture() {
+  return invoke<void>('cancel_region_capture');
+}
+
+export function beginHotkeyCapture() {
+  return invoke<void>('begin_hotkey_capture');
+}
+
+export function endHotkeyCapture() {
+  return invoke<void>('end_hotkey_capture');
+}
+
 export function checkUpdate() {
   return invoke<UpdateInfo | null>('check_update');
 }
@@ -97,6 +144,10 @@ export function onClipboardChanged(callback: () => void): Promise<UnlistenFn> {
 
 export function onTransferChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('transfer-changed', () => callback());
+}
+
+export function onTransferOpened(callback: () => void): Promise<UnlistenFn> {
+  return listen('transfer-opened', () => callback());
 }
 
 export function onSettingsChanged(callback: () => void): Promise<UnlistenFn> {
@@ -125,4 +176,16 @@ export function onToastKey(callback: (key: string) => void): Promise<UnlistenFn>
 
 export function onUpdateAvailable(callback: (version: string) => void): Promise<UnlistenFn> {
   return listen<string>('update-available', (event) => callback(event.payload));
+}
+
+export function onMonitorError(callback: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>('monitor-error', (event) => callback(event.payload));
+}
+
+export function onMonitorOk(callback: () => void): Promise<UnlistenFn> {
+  return listen('monitor-ok', () => callback());
+}
+
+export function onScreenshotError(callback: (code: string) => void): Promise<UnlistenFn> {
+  return listen<string>('screenshot-error', (event) => callback(event.payload));
 }
