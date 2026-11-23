@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="uClipboard" width="96"></p>
+
 # uClipboard
 
 跨平台开源剪贴板管理器，基于 Tauri 2 + React + TypeScript。
@@ -106,6 +108,7 @@ node prototypes/serve.js
 - 临时中转的焦点恢复优化仅在 Windows 启用，其他平台回退为隐藏/重开
 - 区域截图只在 Windows 完成真机验收；macOS 需要屏幕录制权限，Wayland 的覆盖层定位取决于桌面环境
 - 录制快捷键时无法屏蔽其它软件已注册的全局热键；被占用的组合请换一个或临时关闭对应软件
+- 首发版本暂不提供 macOS 安装包；CI 仍保留 macOS 编译检查
 - macOS/Linux 已进入 CI 构建，但本版本只在 Windows 真机完成完整交互验收
 - 代码签名/公证不在 v1 范围，Windows SmartScreen 与 macOS Gatekeeper 可能提示
 

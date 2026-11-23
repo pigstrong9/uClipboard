@@ -11,7 +11,7 @@ mod storage;
 mod tray;
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
@@ -45,6 +45,11 @@ fn center_on_cursor(window: &tauri::WebviewWindow) {
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        if let Some(state) = app.try_state::<state::AppState>() {
+            if let Ok(mut guard) = state.main_shown_at.lock() {
+                *guard = Some(Instant::now());
+            }
+        }
         let _ = window.unminimize();
         center_on_cursor(&window);
         let _ = window.show();
@@ -180,6 +185,7 @@ pub fn run() {
                 transfer_ids: Mutex::new(Vec::new()),
                 target_hwnd: Mutex::new(None),
                 screenshot: Mutex::new(None),
+                main_shown_at: Mutex::new(None),
             });
 
             #[cfg(not(debug_assertions))]
@@ -259,8 +265,9 @@ pub fn run() {
                         }
                     }
                     WindowEvent::Focused(false) => {
-                        let hide_on_blur = handle
-                            .try_state::<state::AppState>()
+                        let state = handle.try_state::<state::AppState>();
+                        let hide_on_blur = state
+                            .as_ref()
                             .and_then(|state| {
                                 state
                                     .settings
@@ -270,6 +277,19 @@ pub fn run() {
                             })
                             .unwrap_or(false);
                         if !hide_on_blur {
+                            return;
+                        }
+                        // Showing the window can briefly emit Focused(false) while
+                        // Windows settles the foreground window; ignoring that grace
+                        // period prevents the "flash then disappear" behaviour.
+                        let just_shown = state
+                            .as_ref()
+                            .and_then(|state| {
+                                state.main_shown_at.lock().ok().and_then(|guard| *guard)
+                            })
+                            .map(|at| at.elapsed() < Duration::from_millis(500))
+                            .unwrap_or(false);
+                        if just_shown {
                             return;
                         }
                         let transfer_visible = handle

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FocusEvent } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 
+import logoUrl from '../assets/logo.png';
 import { errorText } from '../lib/errors';
 import * as ipc from '../lib/ipc';
 import { HotkeyRecorder } from './HotkeyRecorder';
@@ -427,7 +428,10 @@ export function SettingsView({ onClose }: Props) {
         {section === 'about' && (
           <div className="settings-group">
             <div className="about-card">
-              <strong>uClipboard</strong>
+              <div className="about-brand">
+                <img className="about-logo" src={logoUrl} alt="" />
+                <strong>uClipboard</strong>
+              </div>
               <p>{t('aboutDescription')}</p>
               <div className="about-meta">
                 <span>

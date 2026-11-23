@@ -62,7 +62,7 @@ export default function App() {
   const [monitorError, setMonitorError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
+  const selected = items.find((item) => item.id === selectedId) ?? null;
   const paused = settings?.monitorPaused ?? false;
 
   useEffect(() => {
@@ -93,6 +93,7 @@ export default function App() {
         setSettingsOpen(false);
         setPreviewItem(null);
         clearSelection();
+        select(null);
         setQuery('');
         inputRef.current?.focus();
       }),
@@ -312,7 +313,8 @@ export default function App() {
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        const prev = items[Math.max(index - 1, 0)];
+        const prev =
+          found < 0 ? items[items.length - 1] : items[Math.max(index - 1, 0)];
         if (prev) select(prev.id);
         return;
       }

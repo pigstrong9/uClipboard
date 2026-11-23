@@ -89,6 +89,7 @@ pub struct AppState {
     pub transfer_ids: Mutex<Vec<String>>,
     pub target_hwnd: Mutex<Option<isize>>,
     pub screenshot: Mutex<Option<crate::screenshot::ScreenshotSession>>,
+    pub main_shown_at: Mutex<Option<std::time::Instant>>,
 }
 
 /// The subset of [`AppState`] that commands hand to blocking tasks. `State<'_, AppState>`
