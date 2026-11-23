@@ -54,9 +54,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let Some(icon) = app.default_window_icon().cloned() else {
-        return Ok(());
-    };
+    // The tray keeps the compact black/blue mark, which reads better on a dark
+    // notification area than the larger blue app tile.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
     let menu = build_menu(app)?;
 
     TrayIconBuilder::with_id("main")

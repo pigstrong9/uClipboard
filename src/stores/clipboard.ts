@@ -52,9 +52,8 @@ export const useClipboard = create<ClipboardState>((set, get) => ({
       ]);
       if (seq !== requestSeq) return;
       const current = get().selectedId;
-      const selectedId = items.some((item) => item.id === current)
-        ? current
-        : (items[0]?.id ?? null);
+      const selectedId =
+        current && items.some((item) => item.id === current) ? current : null;
       set({ items, favoriteCount, totalCount, loading: false, error: null, selectedId });
     } catch (error) {
       if (seq !== requestSeq) return;

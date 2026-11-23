@@ -1026,6 +1026,7 @@ mod tests {
             transfer_ids: Mutex::new(Vec::new()),
             target_hwnd: Mutex::new(None),
             screenshot: Mutex::new(None),
+            main_shown_at: Mutex::new(None),
         };
 
         assert!(cleanup_media(&app_state.shared()).is_err());

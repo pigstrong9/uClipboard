@@ -30,13 +30,15 @@
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/images/**"]
+        "scope": [
+          "$APPDATA/images/**"
+        ]
       }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyRDdERTE4RTA4MDRDQTUKUldTbFRJRGdHTjdYNGtTclRjZkZQeG1wbGNlWmpoNFFBNVAxK3p5ejhvU1ZBTC9wbm5XZmF6QzEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzNkI3RkJDRDZCMDY3ODQKUldTRVo3RFd2SDlyTXlneG1ReUEvN3YvbXVhd1BZemVMazlXSmR3MzBKbG5XdTd2ZTZGUTBORS8K",
       "endpoints": [
         "https://github.com/pigstrong9/uClipboard/releases/latest/download/latest.json"
       ]

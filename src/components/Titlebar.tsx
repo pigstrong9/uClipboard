@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 
+import logoUrl from '../assets/logo.png';
 import { Icon } from '../lib/icons';
 import { useI18n } from '../lib/useI18n';
 
@@ -24,7 +25,8 @@ export function Titlebar({
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand">
-        <span className="brand-name">{t('appName')}</span>
+        <img className="brand-logo" src={logoUrl} alt="" />
+        <span className="brand-name">uClipboard</span>
       </div>
       <label className="search" htmlFor="searchInput">
         <span className="search-icon">

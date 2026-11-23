@@ -63,4 +63,12 @@ describe('clipboard store', () => {
     expect(useClipboard.getState().selectedIds).toEqual([]);
     await vi.waitFor(() => expect(ipc.listItems).toHaveBeenCalledWith('text', ''));
   });
+
+  it('does not auto-select the first row when nothing is selected', async () => {
+    useClipboard.setState({ selectedId: null, items: [] });
+
+    await useClipboard.getState().load();
+
+    expect(useClipboard.getState().selectedId).toBeNull();
+  });
 });
