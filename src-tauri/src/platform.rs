@@ -224,10 +224,11 @@ pub fn clipboard_format_dword(name: &str) -> Option<u32> {
 }
 
 /// Candidate names for the app the clipboard content came from, used both for the
-/// ignore list (match any) and for display (first entry). macOS reports a localized
-/// display name, so the bundle executable name is included as well.
+/// ignore list (match any) and for display (first entry). Windows asks the clipboard who
+/// wrote it; macOS reports a localized display name, so the bundle executable name is
+/// included as well.
 pub fn clipboard_owner_app_names(app: &tauri::AppHandle) -> Vec<String> {
-    foreground_app_names(app)
+    owner_app_names(app)
 }
 
 #[cfg(target_os = "macos")]
@@ -257,7 +258,7 @@ fn frontmost_app_names() -> Vec<String> {
 /// to the main thread and waited on with a small budget: a busy main thread costs a few
 /// dropped ignore-list checks instead of stalling the monitor.
 #[cfg(target_os = "macos")]
-fn foreground_app_names(app: &tauri::AppHandle) -> Vec<String> {
+fn owner_app_names(app: &tauri::AppHandle) -> Vec<String> {
     use std::sync::mpsc;
 
     if objc2::MainThreadMarker::new().is_some() {
@@ -281,13 +282,15 @@ fn foreground_app_names(app: &tauri::AppHandle) -> Vec<String> {
     }
 }
 
+/// Windows knows exactly who wrote the clipboard, so the foreground app is only a
+/// stand-in for when that owner window is already gone.
 #[cfg(target_os = "windows")]
-fn foreground_app_names(_app: &tauri::AppHandle) -> Vec<String> {
-    foreground_app_name().into_iter().collect()
+fn owner_app_names(_app: &tauri::AppHandle) -> Vec<String> {
+    clipboard_owner_app_name().into_iter().collect()
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn foreground_app_names(_app: &tauri::AppHandle) -> Vec<String> {
+fn owner_app_names(_app: &tauri::AppHandle) -> Vec<String> {
     Vec::new()
 }
 
