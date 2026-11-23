@@ -2,7 +2,16 @@
 
 跨平台开源剪贴板管理器，基于 Tauri 2 + React + TypeScript。
 
-当前进度：**M1 + M2 + M3 功能完成，v0.1.0 待发布**。真实剪贴板采集、SQLite 持久化、搜索/收藏/置顶/删除/复制、自动粘贴、全局快捷键、托盘、单实例、开机自启、忽略应用、隐私标记识别、临时中转窗口、设置持久化、中英文和自动更新均已接入。Windows 真机完成功能验证；macOS/Linux 构建配置已加入 CI，仍需真机验收。
+当前进度：**M1 + M2 + M3 功能完成，v0.1.0 待发布**。真实剪贴板采集、SQLite 持久化、搜索/收藏/置顶/删除/复制、自动粘贴、全局快捷键、托盘、单实例、开机自启、忽略应用、隐私标记识别、临时中转窗口、区域截图、快捷键按键录制、设置持久化、中英文和自动更新均已接入。Windows 真机完成功能验证；macOS/Linux 构建配置已加入 CI，仍需真机验收。
+
+## 截图
+
+<p align="center"><img src="docs/screenshots/main-dark.png" alt="uClipboard 主界面" width="760"></p>
+<p align="center"><img src="docs/screenshots/screenshot-overlay.png" alt="区域截图" width="760"></p>
+<p align="center">
+  <img src="docs/screenshots/transfer-dark.png" alt="临时中转" width="300">
+  <img src="docs/screenshots/settings-dark.png" alt="设置" width="560">
+</p>
 
 ## 功能
 
@@ -21,6 +30,8 @@
 
 - 双击 / Enter 粘贴并隐藏主窗口；中转窗口双击保持自身可见
 - `Alt+V` 切换显示/隐藏；最小化后按快捷键恢复；窗口在鼠标所在显示器居中
+- `Alt+A` 区域截图：拖动选区松开即写入剪贴板，`Esc` 或右键取消；截图快捷键可配置，被占用时自动回退到 `Ctrl+Shift+A`
+- 区域截图写入剪贴板后会作为图片条目进入历史（暂停监控时只写入剪贴板）
 - 数字键 `1-9` 直接粘贴对应条目
 - `Esc` 逐级关闭预览、清空搜索、隐藏窗口
 - 主窗口不显示任务栏图标，关闭按钮改为隐藏，托盘常驻
@@ -37,6 +48,7 @@
 ### 设置与体验
 
 - 设置持久化到 `config.json`；支持快捷键改绑、开机自启、失焦隐藏、纯文本粘贴
+- 快捷键改为按键录制：点击后直接按组合键并自动保存；录制期间暂停 uClipboard 自己的全局快捷键，10 秒无操作自动退出
 - 主题：跟随系统 / 亮色 / 暗色；语言：跟随系统 / 简体中文 / English
 - 启动时及每 24 小时检查更新，设置页可手动检查并安装
 - 关于页显示版本与许可证
@@ -92,12 +104,16 @@ node prototypes/serve.js
 - 多条图片合并为纵向拼接；图片暂不能与文本/文件混排合并
 - 中转窗暂不支持逐条移除或拖拽排序
 - 临时中转的焦点恢复优化仅在 Windows 启用，其他平台回退为隐藏/重开
+- 区域截图只在 Windows 完成真机验收；macOS 需要屏幕录制权限，Wayland 的覆盖层定位取决于桌面环境
+- 录制快捷键时无法屏蔽其它软件已注册的全局热键；被占用的组合请换一个或临时关闭对应软件
 - macOS/Linux 已进入 CI 构建，但本版本只在 Windows 真机完成完整交互验收
 - 代码签名/公证不在 v1 范围，Windows SmartScreen 与 macOS Gatekeeper 可能提示
 
 ## 文档
 
 - 设计文档：`docs/superpowers/specs/2026-11-20-uclipboard-design.md`
+- 区域截图设计：`docs/superpowers/specs/2026-11-23-region-screenshot-design.md`
+- 区域截图计划：`docs/superpowers/plans/2026-11-23-region-screenshot.md`
 - M0 验收：`docs/superpowers/plans/2026-11-20-uclipboard-m0-acceptance.md`
 - M1 验收：`docs/superpowers/plans/2026-11-20-uclipboard-m1-acceptance.md`
 - M2 粘贴增量验收：`docs/superpowers/plans/2026-11-20-uclipboard-m2-paste-acceptance.md`
