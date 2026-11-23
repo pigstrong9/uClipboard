@@ -35,6 +35,8 @@ impl Suppression {
 
     /// Returns true when `(sequence, hash)` is the write armed above, not a new copy.
     pub fn should_skip(&mut self, sequence: Option<u32>, hash: &str) -> bool {
+        #[cfg(not(target_os = "windows"))]
+        let _ = sequence;
         let Some(until) = self.until else {
             return false;
         };

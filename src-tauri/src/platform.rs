@@ -153,11 +153,6 @@ pub fn foreground_target() -> Option<isize> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn focus_window(_hwnd: isize) -> bool {
-    false
-}
-
 #[cfg(target_os = "windows")]
 pub fn clipboard_sequence() -> Option<u32> {
     use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
