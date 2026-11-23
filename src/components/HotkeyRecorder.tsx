@@ -11,6 +11,7 @@ interface Props {
 
 export function HotkeyRecorder({ value, onCommit }: Props) {
   const [recording, setRecording] = useState(false);
+  const [expired, setExpired] = useState(false);
   const beginRef = useRef<Promise<void> | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -43,10 +44,14 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
   const start = useCallback(() => {
     if (recording) return;
     setRecording(true);
+    setExpired(false);
     beginRef.current = ipc.beginHotkeyCapture().catch(() => undefined);
     clearTimer();
     timeoutRef.current = window.setTimeout(() => {
       void finish(null);
+      // Leave the reason visible long enough to read, then restore the shortcut.
+      setExpired(true);
+      timeoutRef.current = window.setTimeout(() => setExpired(false), 4_000);
     }, 10_000);
     buttonRef.current?.focus();
   }, [recording, clearTimer, finish]);
@@ -84,18 +89,35 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
     return () => window.removeEventListener('keydown', handler, true);
   }, [recording, finish]);
 
+  // Recording swallows every key, and the focus that `onBlur` would catch a click-away
+  // on never arrives in the first place on macOS, so a click outside the button is the
+  // only visible way to leave recording before the timeout.
+  useEffect(() => {
+    if (!recording) return;
+    const handler = (event: PointerEvent) => {
+      const button = buttonRef.current;
+      if (button && button.contains(event.target as Node | null)) return;
+      void finish(null);
+    };
+    window.addEventListener('pointerdown', handler, true);
+    return () => window.removeEventListener('pointerdown', handler, true);
+  }, [recording, finish]);
+
   return (
-    <button
-      ref={buttonRef}
-      type="button"
-      className={`settings-input hotkey-recorder ${recording ? 'recording' : ''}`}
-      title={recording ? t('hotkeyRecordingHint') : value || t('hotkeyRecordingHint')}
-      onClick={start}
-      onBlur={() => {
-        if (recording) void finish(null);
-      }}
-    >
-      {recording ? t('hotkeyRecording') : value || t('hotkeyRecordingHint')}
-    </button>
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`settings-input hotkey-recorder ${recording ? 'recording' : ''}`}
+        title={recording ? t('hotkeyRecordingHint') : value || t('hotkeyRecordingHint')}
+        onClick={start}
+        onBlur={() => {
+          if (recording) void finish(null);
+        }}
+      >
+        {recording ? t('hotkeyRecording') : value || t('hotkeyRecordingHint')}
+      </button>
+      {expired && <span className="settings-note">{t('hotkeyRecordingExpired')}</span>}
+    </>
   );
 }

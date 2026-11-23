@@ -47,6 +47,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "createUpdaterArtifacts": false,
     "shortDescription": "跨平台开源剪贴板管理器",
     "longDescription": "uClipboard 自动记录文本、图片和文件剪贴板历史，支持搜索、收藏、置顶、全局快捷键和临时中转。",

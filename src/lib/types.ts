@@ -89,14 +89,14 @@ export interface Settings {
   maxImageBytes: number;
 }
 
+/**
+ * One overlay's capture. Each display gets its own image at its own pixel resolution,
+ * so the CSS size of the window and the size of this image give the crop scale.
+ */
 export interface ScreenshotSession {
   imagePath: string;
   width: number;
   height: number;
-  offsetX: number;
-  offsetY: number;
-  sliceWidth: number;
-  sliceHeight: number;
 }
 
 export interface UpdateInfo {

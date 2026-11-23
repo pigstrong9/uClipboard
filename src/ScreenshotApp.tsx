@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 
 import { errorText } from './lib/errors';
 import * as ipc from './lib/ipc';
-import type { SelectionBox } from './lib/screenshot';
+import { selectionToPixels, type SelectionBox } from './lib/screenshot';
 import type { ScreenshotSession } from './lib/types';
 import { useI18n } from './lib/useI18n';
 import { useSettings } from './stores/settings';
@@ -14,10 +14,6 @@ export default function ScreenshotApp() {
   const [selection, setSelection] = useState<SelectionBox | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewport, setViewport] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  });
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const initSettings = useSettings((state) => state.init);
@@ -27,12 +23,16 @@ export default function ScreenshotApp() {
     void initSettings();
   }, [initSettings]);
 
-  useEffect(() => {
-    const onResize = () =>
-      setViewport({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  /**
+   * The overlay's own box in CSS pixels. Measured from the element rather than from
+   * `window.innerWidth` because the window is resized by the backend after the page
+   * loads, and a stale size would map the selection through the wrong scale.
+   */
+  const viewSize = () => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return null;
+    return { width: rect.width, height: rect.height };
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +95,7 @@ export default function ScreenshotApp() {
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const start = dragStart.current;
-    if (!start || busy) return;
+    if (!start || busy || !session) return;
     dragStart.current = null;
     const point = localPoint(event.clientX, event.clientY);
     const box: SelectionBox = {
@@ -109,14 +109,15 @@ export default function ScreenshotApp() {
       setSelection(null);
       return;
     }
-    // Each overlay window shows one display's slice, so the selection is offset
-    // back into the shared capture canvas before cropping.
-    const pixels = {
-      x: Math.round(offsetX + box.left * scaleX),
-      y: Math.round(offsetY + box.top * scaleY),
-      width: Math.max(1, Math.round(box.width * scaleX)),
-      height: Math.max(1, Math.round(box.height * scaleY)),
-    };
+    const view = viewSize();
+    if (!view) return;
+    // The selection belongs to this overlay's display, so it maps into that display's
+    // own capture instead of a canvas shared by displays of different densities.
+    const pixels = selectionToPixels(box, session.width, session.height, view.width, view.height);
+    if (!pixels) {
+      setSelection(null);
+      return;
+    }
     setBusy(true);
     void ipc
       .captureRegion(pixels.x, pixels.y, pixels.width, pixels.height)
@@ -126,18 +127,11 @@ export default function ScreenshotApp() {
       });
   };
 
-  const scaleX = session ? session.sliceWidth / Math.max(1, viewport.width) : 1;
-  const scaleY = session ? session.sliceHeight / Math.max(1, viewport.height) : 1;
-  const offsetX = session?.offsetX ?? 0;
-  const offsetY = session?.offsetY ?? 0;
-  const imageStyle = session
-    ? {
-        left: `${-offsetX / scaleX}px`,
-        top: `${-offsetY / scaleY}px`,
-        width: `${session.width / scaleX}px`,
-        height: `${session.height / scaleY}px`,
-      }
-    : undefined;
+  const view = viewSize();
+  const hint =
+    session && view && selection
+      ? selectionToPixels(selection, session.width, session.height, view.width, view.height)
+      : null;
   const imageUrl = session ? convertFileSrc(session.imagePath) : null;
   const hasSelection = Boolean(selection && selection.width > 0 && selection.height > 0);
 
@@ -160,7 +154,6 @@ export default function ScreenshotApp() {
       {imageUrl && (
         <img
           className="shot-image"
-          style={imageStyle}
           src={imageUrl}
           alt=""
           draggable={false}
@@ -216,7 +209,7 @@ export default function ScreenshotApp() {
               top: selection.top + selection.height + 8,
             }}
           >
-            {Math.round(selection.width * scaleX)} × {Math.round(selection.height * scaleY)}
+            {hint ? `${hint.width} × ${hint.height}` : ''}
           </div>
         </>
       ) : (

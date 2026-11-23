@@ -12,9 +12,14 @@ export interface PixelRect {
   height: number;
 }
 
-/// Converts a CSS-pixel selection into the original screenshot's pixel space.
-/// The overlay displays the image stretched to the window, so the ratio between
-/// natural size and rendered size is the display scale factor.
+/**
+ * Converts a CSS-pixel selection into the pixels of the capture shown by one overlay.
+ *
+ * Each display keeps its own capture at its own pixel resolution, so the ratio between
+ * the image size and the rendered size is that display's scale factor. Sizing the window
+ * differently — or a resize that has not landed yet — only changes `displayWidth` and
+ * `displayHeight`, never the mapping.
+ */
 export function selectionToPixels(
   selection: SelectionBox,
   imageWidth: number,

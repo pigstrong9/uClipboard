@@ -69,4 +69,27 @@ describe('HotkeyRecorder', () => {
     expect(onCommit).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Alt+V' })).toBeTruthy();
   });
+
+  it('cancels on a click away, since the button never gains focus', async () => {
+    const onCommit = vi.fn();
+    render(<HotkeyRecorder value="Alt+V" onCommit={onCommit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Alt+V' }));
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(ipc.endHotkeyCapture).toHaveBeenCalled());
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('keeps recording when clicking the recorder itself', async () => {
+    const onCommit = vi.fn();
+    render(<HotkeyRecorder value="Alt+V" onCommit={onCommit} />);
+
+    const button = screen.getByRole('button', { name: 'Alt+V' });
+    fireEvent.click(button);
+    fireEvent.pointerDown(button);
+    fireEvent.keyDown(document.body, { key: 'A', code: 'KeyA', ctrlKey: true });
+
+    await waitFor(() => expect(onCommit).toHaveBeenCalledWith('Ctrl+A'));
+  });
 });

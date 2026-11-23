@@ -257,7 +257,7 @@ fn monitor_loop(
 
         // Privacy and the ignore list are checked before reading, so concealed content
         // is never pulled into memory or decoded as an image first.
-        let owner_names = platform::clipboard_owner_app_names();
+        let owner_names = platform::clipboard_owner_app_names(&app);
         if owner_names.iter().any(|name| snapshot.ignores_app(name)) {
             advance_sequence(&mut last_sequence, sequence);
             clear_error(&app, &mut last_error);

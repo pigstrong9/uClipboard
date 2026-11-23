@@ -226,12 +226,12 @@ pub fn clipboard_format_dword(name: &str) -> Option<u32> {
 /// Candidate names for the app the clipboard content came from, used both for the
 /// ignore list (match any) and for display (first entry). macOS reports a localized
 /// display name, so the bundle executable name is included as well.
-pub fn clipboard_owner_app_names() -> Vec<String> {
-    foreground_app_names()
+pub fn clipboard_owner_app_names(app: &tauri::AppHandle) -> Vec<String> {
+    foreground_app_names(app)
 }
 
 #[cfg(target_os = "macos")]
-fn foreground_app_names() -> Vec<String> {
+fn frontmost_app_names() -> Vec<String> {
     use objc2_app_kit::NSWorkspace;
     let workspace = NSWorkspace::sharedWorkspace();
     let Some(app) = workspace.frontmostApplication() else {
@@ -252,13 +252,42 @@ fn foreground_app_names() -> Vec<String> {
     names
 }
 
+/// `NSWorkspace` belongs to AppKit and may only be touched from the main thread, while
+/// the clipboard monitor runs on its own polling thread. The lookup is therefore handed
+/// to the main thread and waited on with a small budget: a busy main thread costs a few
+/// dropped ignore-list checks instead of stalling the monitor.
+#[cfg(target_os = "macos")]
+fn foreground_app_names(app: &tauri::AppHandle) -> Vec<String> {
+    use std::sync::mpsc;
+
+    if objc2::MainThreadMarker::new().is_some() {
+        return frontmost_app_names();
+    }
+    let (tx, rx) = mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = tx.send(frontmost_app_names());
+        })
+        .is_err()
+    {
+        return Vec::new();
+    }
+    match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+        Ok(names) => names,
+        Err(error) => {
+            log::debug!("frontmost app lookup skipped: {error}");
+            Vec::new()
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
-fn foreground_app_names() -> Vec<String> {
+fn foreground_app_names(_app: &tauri::AppHandle) -> Vec<String> {
     foreground_app_name().into_iter().collect()
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn foreground_app_names() -> Vec<String> {
+fn foreground_app_names(_app: &tauri::AppHandle) -> Vec<String> {
     Vec::new()
 }
 
@@ -591,10 +620,28 @@ pub fn request_accessibility_access() -> bool {
     false
 }
 
+/// True when the running system is at least `major.minor`.
+///
+/// The objc2 bindings and the `extern "C"` declarations below carry no availability
+/// information, so an API newer than the system in use is either an unknown selector or
+/// a missing symbol at process start. Every such call is guarded by this.
+#[cfg(target_os = "macos")]
+fn macos_at_least(major: isize, minor: isize) -> bool {
+    use objc2_foundation::NSProcessInfo;
+
+    let version = NSProcessInfo::processInfo().operatingSystemVersion();
+    version.majorVersion > major || (version.majorVersion == major && version.minorVersion >= minor)
+}
+
 /// Screen recording permission, required by the region screenshot capture. `None`
 /// means the platform has no such permission model.
 #[cfg(target_os = "macos")]
-pub fn screen_capture_trusted() -> Option<bool> {    #[link(name = "CoreGraphics", kind = "framework")]
+pub fn screen_capture_trusted() -> Option<bool> {
+    // `CGPreflightScreenCaptureAccess` arrived with macOS 11.
+    if !macos_at_least(11, 0) {
+        return None;
+    }
+    #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGPreflightScreenCaptureAccess() -> u8;
     }
@@ -611,6 +658,10 @@ pub fn screen_capture_trusted() -> Option<bool> {
 /// this is best-effort after the user already declined.
 #[cfg(target_os = "macos")]
 pub fn request_screen_capture_access() -> bool {
+    // `CGRequestScreenCaptureAccess` arrived with macOS 10.15.
+    if !macos_at_least(10, 15) {
+        return false;
+    }
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGRequestScreenCaptureAccess() -> u8;
@@ -657,15 +708,23 @@ pub fn place_overlay(window: &tauri::WebviewWindow, x: f64, y: f64, width: f64, 
         log::warn!("place_overlay skipped: not on the main thread");
         return;
     };
-    // AppKit's origin is the bottom-left corner of the primary screen.
-    let primary_height = NSScreen::screens(mtm)
+    // AppKit's origin is the bottom-left corner of the primary screen, whose frame starts
+    // at (0, 0). Falling back to the first screen keeps the overlay from being placed
+    // against a zero height, which would put it entirely off screen.
+    let frames: Vec<NSRect> = NSScreen::screens(mtm)
         .iter()
-        .find(|screen| {
-            let frame = screen.frame();
-            frame.origin.x == 0.0 && frame.origin.y == 0.0
-        })
-        .map(|screen| screen.frame().size.height)
-        .unwrap_or(0.0);
+        .map(|screen| screen.frame())
+        .collect();
+    let Some(primary_height) = frames
+        .iter()
+        .find(|frame| frame.origin.x == 0.0 && frame.origin.y == 0.0)
+        .or_else(|| frames.first())
+        .map(|frame| frame.size.height)
+        .filter(|height| *height > 0.0)
+    else {
+        log::warn!("place_overlay skipped: no usable screen frame");
+        return;
+    };
     let rect = NSRect::new(
         NSPoint::new(x, primary_height - y - height),
         NSSize::new(width, height),
@@ -708,15 +767,17 @@ pub fn open_path(path: &std::path::Path) -> bool {
 #[cfg(target_os = "macos")]
 pub fn activate_app() {
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{
-        NSApplication, NSApplicationActivationOptions, NSRunningApplication,
-    };
+    use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication};
     let Some(mtm) = MainThreadMarker::new() else {
         log::warn!("activate_app skipped: not on the main thread");
         return;
     };
     let app = NSApplication::sharedApplication(mtm);
-    app.activate();
+    // `-[NSApplication activate]` is newer than the rest of this function; sending it to
+    // an AppKit that has never heard of it aborts the process.
+    if macos_at_least(14, 0) {
+        app.activate();
+    }
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
     let current = NSRunningApplication::currentApplication();
@@ -785,6 +846,6 @@ pub fn show_app() {
     if let Some(mtm) = MainThreadMarker::new() {
         let app = NSApplication::sharedApplication(mtm);
         app.unhide(None);
-        app.activate();
+        activate_app();
     }
 }
