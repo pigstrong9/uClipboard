@@ -223,14 +223,43 @@ pub fn clipboard_format_dword(name: &str) -> Option<u32> {
     value
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn foreground_app_name() -> Option<String> {
-    None
+/// Candidate names for the app the clipboard content came from, used both for the
+/// ignore list (match any) and for display (first entry). macOS reports a localized
+/// display name, so the bundle executable name is included as well.
+pub fn clipboard_owner_app_names() -> Vec<String> {
+    foreground_app_names()
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn clipboard_owner_app_name() -> Option<String> {
-    foreground_app_name()
+#[cfg(target_os = "macos")]
+fn foreground_app_names() -> Vec<String> {
+    use objc2_app_kit::NSWorkspace;
+    let workspace = NSWorkspace::sharedWorkspace();
+    let Some(app) = workspace.frontmostApplication() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if let Some(name) = app.localizedName() {
+        names.push(name.to_string());
+    }
+    if let Some(url) = app.executableURL() {
+        if let Some(name) = url.lastPathComponent() {
+            let name = name.to_string();
+            if !names.iter().any(|existing| existing == &name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+#[cfg(target_os = "windows")]
+fn foreground_app_names() -> Vec<String> {
+    foreground_app_name().into_iter().collect()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn foreground_app_names() -> Vec<String> {
+    Vec::new()
 }
 
 /// A revision that changes whenever the system clipboard changes.
@@ -508,6 +537,149 @@ pub fn open_accessibility_settings() -> bool {
     false
 }
 
+/// Asks macOS to grant Accessibility access. The system dialog is what registers
+/// uClipboard in the Accessibility list, so this is the only way to make the app
+/// visible there; `AXIsProcessTrusted` alone never prompts.
+#[cfg(target_os = "macos")]
+pub fn request_accessibility_access() -> bool {
+    type CfRef = *const std::ffi::c_void;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: CfRef) -> u8;
+        static kAXTrustedCheckOptionPrompt: CfRef;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFBooleanTrue: CfRef;
+        static kCFTypeDictionaryKeyCallBacks: u8;
+        static kCFTypeDictionaryValueCallBacks: u8;
+        fn CFDictionaryCreate(
+            allocator: CfRef,
+            keys: *const CfRef,
+            values: *const CfRef,
+            num_values: isize,
+            key_callbacks: *const std::ffi::c_void,
+            value_callbacks: *const std::ffi::c_void,
+        ) -> CfRef;
+        fn CFRelease(value: CfRef);
+    }
+
+    // SAFETY: the constants are process-wide singletons; the dictionary only borrows
+    // them and is released before returning.
+    unsafe {
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            std::ptr::addr_of!(kCFTypeDictionaryKeyCallBacks).cast(),
+            std::ptr::addr_of!(kCFTypeDictionaryValueCallBacks).cast(),
+        );
+        let trusted = AXIsProcessTrustedWithOptions(options) != 0;
+        if !options.is_null() {
+            CFRelease(options);
+        }
+        trusted
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn request_accessibility_access() -> bool {
+    false
+}
+
+/// Screen recording permission, required by the region screenshot capture. `None`
+/// means the platform has no such permission model.
+#[cfg(target_os = "macos")]
+pub fn screen_capture_trusted() -> Option<bool> {    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> u8;
+    }
+    // SAFETY: the function takes no arguments and only reads the permission state.
+    Some(unsafe { CGPreflightScreenCaptureAccess() != 0 })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn screen_capture_trusted() -> Option<bool> {
+    None
+}
+
+/// Triggers the system screen recording prompt. macOS only shows it once per app, so
+/// this is best-effort after the user already declined.
+#[cfg(target_os = "macos")]
+pub fn request_screen_capture_access() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGRequestScreenCaptureAccess() -> u8;
+    }
+    // SAFETY: the function takes no arguments and only reads the permission state.
+    unsafe { CGRequestScreenCaptureAccess() != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn request_screen_capture_access() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+pub fn open_screen_recording_settings() -> bool {
+    std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_screen_recording_settings() -> bool {
+    false
+}
+
+/// Places the capture overlay by setting the NSWindow frame directly. Going through
+/// `set_position` round-trips tao's own physical/logical conversion, which mangles
+/// coordinates on multi-display Retina setups. Coordinates are screen points measured
+/// from the top-left of the main display, the same space the capture reports.
+#[cfg(target_os = "macos")]
+pub fn place_overlay(window: &tauri::WebviewWindow, x: f64, y: f64, width: f64, height: f64) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSScreen, NSWindow};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        log::warn!("place_overlay skipped: not on the main thread");
+        return;
+    };
+    // AppKit's origin is the bottom-left corner of the primary screen.
+    let primary_height = NSScreen::screens(mtm)
+        .iter()
+        .find(|screen| {
+            let frame = screen.frame();
+            frame.origin.x == 0.0 && frame.origin.y == 0.0
+        })
+        .map(|screen| screen.frame().size.height)
+        .unwrap_or(0.0);
+    let rect = NSRect::new(
+        NSPoint::new(x, primary_height - y - height),
+        NSSize::new(width, height),
+    );
+    // SAFETY: the window is owned by tao and this runs on the main thread.
+    unsafe {
+        let ns_window = &*(ns_window as *mut NSWindow);
+        ns_window.setFrame_display(rect, true);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn place_overlay(_window: &tauri::WebviewWindow, _x: f64, _y: f64, _w: f64, _h: f64) {}
+
 /// Opens a directory in the platform file manager.
 pub fn open_path(path: &std::path::Path) -> bool {
     #[cfg(target_os = "windows")]
@@ -529,6 +701,69 @@ pub fn open_path(path: &std::path::Path) -> bool {
             .is_ok()
     }
 }
+
+/// tao only calls `activateIgnoringOtherApps:`, which macOS 14+ ignores, so a panel that
+/// is shown from a background hotkey never becomes key and keystrokes keep going to the
+/// previous app. Route activation through the modern API. Must run on the main thread.
+#[cfg(target_os = "macos")]
+pub fn activate_app() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationOptions, NSRunningApplication,
+    };
+    let Some(mtm) = MainThreadMarker::new() else {
+        log::warn!("activate_app skipped: not on the main thread");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    app.activate();
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    let current = NSRunningApplication::currentApplication();
+    #[allow(deprecated)]
+    current.activateWithOptions(
+        NSApplicationActivationOptions::ActivateAllWindows
+            | NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+    );
+}
+
+/// Makes the WKWebView the window's first responder. A window that only became key
+/// through `makeKeyAndOrderFront` keeps the responder chain on the content view, so
+/// keyboard events never reach the page until the user clicks inside it. Must run on
+/// the main thread.
+#[cfg(target_os = "macos")]
+pub fn focus_webview(window: &tauri::WebviewWindow) {
+    use objc2_app_kit::NSWindow;
+    use objc2_web_kit::WKWebView;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: `ns_window` points at the live NSWindow tao owns for this window and is
+    // only read here, on the main thread.
+    unsafe {
+        let ns_window = &*(ns_window as *mut NSWindow);
+        let Some(content) = ns_window.contentView() else {
+            return;
+        };
+        for view in content.subviews().iter() {
+            if view.downcast_ref::<WKWebView>().is_some() {
+                let _ = ns_window.makeFirstResponder(Some(&view));
+                return;
+            }
+        }
+        let _ = ns_window.makeFirstResponder(Some(&content));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focus_webview(_window: &tauri::WebviewWindow) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_app() {}
 
 /// Deactivates the whole application (not just a window) before synthesizing Cmd+V, so
 /// the keystroke goes to the app the user was working in. Must run on the main thread.

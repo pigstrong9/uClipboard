@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatHotkey, isMacPlatform } from '../lib/hotkey';
 import * as ipc from '../lib/ipc';
@@ -13,6 +13,7 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
   const [recording, setRecording] = useState(false);
   const beginRef = useRef<Promise<void> | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const { t } = useI18n();
 
   const clearTimer = useCallback(() => {
@@ -47,6 +48,7 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
     timeoutRef.current = window.setTimeout(() => {
       void finish(null);
     }, 10_000);
+    buttonRef.current?.focus();
   }, [recording, clearTimer, finish]);
 
   useEffect(
@@ -57,26 +59,34 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
     [clearTimer, endCapture],
   );
 
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+  // Keys are captured at the window level: WKWebView on macOS does not focus a
+  // button when it is clicked, so a handler bound to the button never fires there.
+  useEffect(() => {
     if (!recording) return;
-    if (event.key === 'Escape') {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        void finish(null);
+        return;
+      }
+      if (event.key === 'Tab') {
+        void finish(null);
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      void finish(null);
-      return;
-    }
-    if (event.key === 'Tab') {
-      void finish(null);
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const formatted = formatHotkey(event, isMacPlatform());
-    if (formatted) void finish(formatted);
-  };
+      if (event.repeat) return;
+      const formatted = formatHotkey(event, isMacPlatform());
+      if (formatted) void finish(formatted);
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [recording, finish]);
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       className={`settings-input hotkey-recorder ${recording ? 'recording' : ''}`}
       title={recording ? t('hotkeyRecordingHint') : value || t('hotkeyRecordingHint')}
@@ -84,7 +94,6 @@ export function HotkeyRecorder({ value, onCommit }: Props) {
       onBlur={() => {
         if (recording) void finish(null);
       }}
-      onKeyDown={onKeyDown}
     >
       {recording ? t('hotkeyRecording') : value || t('hotkeyRecordingHint')}
     </button>

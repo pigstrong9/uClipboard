@@ -31,6 +31,7 @@ const ERROR_KEYS: Record<string, string> = {
   'monitor.panicked': 'errorMonitorPanicked',
   'screenshot.busy': 'errorScreenshotBusy',
   'screenshot.capture_failed': 'errorScreenshotCapture',
+  'screenshot.permission': 'errorScreenshotPermission',
   'screenshot.too_large': 'errorScreenshotTooLarge',
   'screenshot.window_failed': 'errorScreenshotWindow',
   'screenshot.session_missing': 'errorScreenshotSession',

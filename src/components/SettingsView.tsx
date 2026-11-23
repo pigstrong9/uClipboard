@@ -3,6 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 
 import logoUrl from '../assets/logo.png';
 import { errorText } from '../lib/errors';
+import { isMacPlatform } from '../lib/hotkey';
 import * as ipc from '../lib/ipc';
 import { HotkeyRecorder } from './HotkeyRecorder';
 import { Icon } from '../lib/icons';
@@ -12,7 +13,7 @@ import { useClipboard } from '../stores/clipboard';
 import { useSettings } from '../stores/settings';
 import { useUi } from '../stores/ui';
 
-const SUGGESTED_APPS = [
+const SUGGESTED_APPS_WINDOWS = [
   'KeePass.exe',
   'KeePassXC.exe',
   '1Password.exe',
@@ -22,6 +23,16 @@ const SUGGESTED_APPS = [
   'Keeper.exe',
   'Enpass.exe',
   'NordPass.exe',
+];
+
+const SUGGESTED_APPS_MACOS = [
+  'KeePassXC',
+  '1Password',
+  'Bitwarden',
+  'Dashlane',
+  'Keeper',
+  'Enpass',
+  'NordPass',
 ];
 
 type Section = 'basic' | 'history' | 'privacy' | 'about';
@@ -43,6 +54,7 @@ export function SettingsView({ onClose }: Props) {
   const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [accessibility, setAccessibility] = useState<boolean | null>(null);
+  const [screenPermission, setScreenPermission] = useState<boolean | null>(null);
 
   const persistedIgnored = settings?.ignoredApps.join('\n');
 
@@ -62,6 +74,13 @@ export function SettingsView({ onClose }: Props) {
       .accessibilityStatus()
       .then(setAccessibility)
       .catch(() => setAccessibility(null));
+  }, []);
+
+  useEffect(() => {
+    ipc
+      .screenshotPermissionStatus()
+      .then(setScreenPermission)
+      .catch(() => setScreenPermission(null));
   }, []);
 
   const commit = async (patch: Partial<Settings>, message?: string) => {
@@ -234,9 +253,64 @@ export function SettingsView({ onClose }: Props) {
                   <button
                     type="button"
                     className="settings-button"
+                    onClick={() => {
+                      void ipc
+                        .requestAccessibilityPermission()
+                        .then(async (trusted) => {
+                          setAccessibility(trusted);
+                          if (!trusted) {
+                            await ipc.openAccessibilitySettings().catch(() => undefined);
+                          }
+                          toast(
+                            t(trusted ? 'accessibilityGranted' : 'accessibilityRequested'),
+                          );
+                        })
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {t('requestAccessibility')}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-button"
                     onClick={() => void ipc.openAccessibilitySettings()}
                   >
                     {t('openAccessibilitySettings')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {screenPermission === false && (
+              <div className="setting-row setting-stack">
+                <span className="settings-note">{t('screenRecordingNote')}</span>
+                <div className="settings-inline">
+                  <button
+                    type="button"
+                    className="settings-button"
+                    onClick={() => {
+                      void ipc
+                        .requestScreenshotPermission()
+                        .then(async (granted) => {
+                          setScreenPermission(granted);
+                          if (!granted) {
+                            await ipc.openScreenRecordingSettings().catch(() => undefined);
+                          }
+                          toast(
+                            t(granted ? 'screenRecordingGranted' : 'screenRecordingNote'),
+                          );
+                        })
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {t('requestScreenRecording')}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-button"
+                    onClick={() => void ipc.openScreenRecordingSettings()}
+                  >
+                    {t('openScreenRecordingSettings')}
                   </button>
                 </div>
               </div>
@@ -395,7 +469,7 @@ export function SettingsView({ onClose }: Props) {
               />
               <div className="settings-inline settings-inline-wrap">
                 <span className="settings-note">{t('ignoredSuggestions')}</span>
-                {SUGGESTED_APPS.map((app) => (
+                {(isMacPlatform() ? SUGGESTED_APPS_MACOS : SUGGESTED_APPS_WINDOWS).map((app) => (
                   <button
                     key={app}
                     type="button"

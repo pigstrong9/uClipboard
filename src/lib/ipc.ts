@@ -102,6 +102,22 @@ export function openAccessibilitySettings() {
   return invoke<boolean>('open_accessibility_settings');
 }
 
+export function requestAccessibilityPermission() {
+  return invoke<boolean>('request_accessibility_permission');
+}
+
+export function screenshotPermissionStatus() {
+  return invoke<boolean | null>('screenshot_permission_status');
+}
+
+export function requestScreenshotPermission() {
+  return invoke<boolean>('request_screenshot_permission');
+}
+
+export function openScreenRecordingSettings() {
+  return invoke<boolean>('open_screen_recording_settings');
+}
+
 export function openLogsDir() {
   return invoke<void>('open_logs_dir');
 }

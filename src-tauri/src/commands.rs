@@ -132,13 +132,19 @@ fn send_paste_shortcut(_enigo: &mut ()) -> Result<(), String> {
 fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        // kVK_ANSI_V. `Key::Unicode('v')` resolves through the Text Input Source layout
+        // tables, which can block off the main thread and yields keycode 0 with some
+        // input sources, so Cmd+V never actually leaves as V.
+        const KEYCODE_V: u32 = 9;
         enigo.key(Key::Meta, Press).map_err(|e| e.to_string())?;
         std::thread::sleep(Duration::from_millis(15));
-        enigo
-            .key(Key::Unicode('v'), Click)
-            .map_err(|e| e.to_string())?;
+        let clicked = enigo
+            .key(Key::Other(KEYCODE_V), Click)
+            .map_err(|e| e.to_string());
         std::thread::sleep(Duration::from_millis(15));
+        // Release Command even if the V press failed, otherwise the modifier sticks.
         enigo.key(Key::Meta, Release).map_err(|e| e.to_string())?;
+        clicked?;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -558,6 +564,32 @@ pub fn open_accessibility_settings() -> bool {
 }
 
 #[tauri::command]
+pub fn request_accessibility_permission() -> bool {
+    let before = crate::platform::accessibility_trusted();
+    let trusted = crate::platform::request_accessibility_access();
+    log::info!("accessibility permission requested: before={before:?} trusted={trusted}");
+    trusted
+}
+
+#[tauri::command]
+pub fn screenshot_permission_status() -> Option<bool> {
+    crate::platform::screen_capture_trusted()
+}
+
+#[tauri::command]
+pub fn request_screenshot_permission() -> bool {
+    let before = crate::platform::screen_capture_trusted();
+    let granted = crate::platform::request_screen_capture_access();
+    log::info!("screen capture permission requested: before={before:?} granted={granted}");
+    granted
+}
+
+#[tauri::command]
+pub fn open_screen_recording_settings() -> bool {
+    crate::platform::open_screen_recording_settings()
+}
+
+#[tauri::command]
 pub fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let dir = app
@@ -633,8 +665,12 @@ pub async fn paste_item(
 ) -> Result<ClipItem, String> {
     let shared = state.shared();
     #[cfg(target_os = "macos")]
-    if crate::platform::accessibility_trusted() == Some(false) {
-        return Err("paste.accessibility_required".to_string());
+    {
+        let trusted = crate::platform::accessibility_trusted();
+        log::debug!("paste_item start: accessibility={trusted:?}");
+        if trusted == Some(false) {
+            return Err("paste.accessibility_required".to_string());
+        }
     }
     let window = app
         .get_webview_window("main")
@@ -667,6 +703,7 @@ pub async fn paste_item(
         Err(error) => {
             let _ = window.show();
             let _ = window.set_focus();
+            let _ = app.run_on_main_thread(crate::platform::activate_app);
             Err(error)
         }
     }
@@ -760,6 +797,7 @@ pub async fn paste_transfer_item(
         Err(error) => {
             let _ = transfer.show();
             let _ = transfer.set_focus();
+            let _ = app.run_on_main_thread(crate::platform::activate_app);
             Err(error)
         }
     }
@@ -800,6 +838,23 @@ pub async fn open_transfer(
         eprintln!("open_transfer show failed: {e}");
         e.to_string()
     })?;
+    // Same macOS quirk as the main panel: a window created hidden never becomes key, so
+    // the webview has to be put back in the responder chain before it can take keys.
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(window) = handle.get_webview_window("transfer") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            crate::platform::activate_app();
+            if let Some(window) = handle.get_webview_window("transfer") {
+                let _ = window.set_focus();
+                crate::platform::focus_webview(&window);
+            }
+        });
+    }
     // The window is only hidden when closed, so its React state survives; tell it to
     // drop the previous search/expand state before new items arrive.
     app.emit("transfer-opened", ()).map_err(|e| e.to_string())?;

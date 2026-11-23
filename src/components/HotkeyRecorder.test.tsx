@@ -43,6 +43,20 @@ describe('HotkeyRecorder', () => {
     expect(ipc.endHotkeyCapture).toHaveBeenCalled();
   });
 
+  it('records keys fired outside the button, where macOS WKWebView sends them', async () => {
+    const onCommit = vi.fn();
+    render(<HotkeyRecorder value="Alt+V" onCommit={onCommit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Alt+V' }));
+    fireEvent.keyDown(document.body, {
+      key: 'å',
+      code: 'KeyA',
+      altKey: true,
+    });
+
+    await waitFor(() => expect(onCommit).toHaveBeenCalledWith('Alt+A'));
+  });
+
   it('cancels with Escape without committing', async () => {
     const onCommit = vi.fn();
     render(<HotkeyRecorder value="Alt+V" onCommit={onCommit} />);

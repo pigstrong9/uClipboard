@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 
 import { errorText } from './lib/errors';
 import * as ipc from './lib/ipc';
-import { selectionToPixels, type SelectionBox } from './lib/screenshot';
+import type { SelectionBox } from './lib/screenshot';
 import type { ScreenshotSession } from './lib/types';
 import { useI18n } from './lib/useI18n';
 import { useSettings } from './stores/settings';
@@ -14,15 +14,25 @@ export default function ScreenshotApp() {
   const [selection, setSelection] = useState<SelectionBox | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewport, setViewport] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
   const initSettings = useSettings((state) => state.init);
   const { t } = useI18n();
 
   useEffect(() => {
     void initSettings();
   }, [initSettings]);
+
+  useEffect(() => {
+    const onResize = () =>
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,22 +105,18 @@ export default function ScreenshotApp() {
       height: Math.abs(point.y - start.y),
     };
     setSelection(box);
-    if (box.width < 2 || box.height < 2 || !imageRef.current) {
+    if (box.width < 2 || box.height < 2) {
       setSelection(null);
       return;
     }
-    const rect = imageRef.current.getBoundingClientRect();
-    const pixels = selectionToPixels(
-      box,
-      imageRef.current.naturalWidth,
-      imageRef.current.naturalHeight,
-      rect.width,
-      rect.height,
-    );
-    if (!pixels) {
-      setSelection(null);
-      return;
-    }
+    // Each overlay window shows one display's slice, so the selection is offset
+    // back into the shared capture canvas before cropping.
+    const pixels = {
+      x: Math.round(offsetX + box.left * scaleX),
+      y: Math.round(offsetY + box.top * scaleY),
+      width: Math.max(1, Math.round(box.width * scaleX)),
+      height: Math.max(1, Math.round(box.height * scaleY)),
+    };
     setBusy(true);
     void ipc
       .captureRegion(pixels.x, pixels.y, pixels.width, pixels.height)
@@ -120,8 +126,18 @@ export default function ScreenshotApp() {
       });
   };
 
-  const scaleX = session ? session.width / Math.max(1, window.innerWidth) : 1;
-  const scaleY = session ? session.height / Math.max(1, window.innerHeight) : 1;
+  const scaleX = session ? session.sliceWidth / Math.max(1, viewport.width) : 1;
+  const scaleY = session ? session.sliceHeight / Math.max(1, viewport.height) : 1;
+  const offsetX = session?.offsetX ?? 0;
+  const offsetY = session?.offsetY ?? 0;
+  const imageStyle = session
+    ? {
+        left: `${-offsetX / scaleX}px`,
+        top: `${-offsetY / scaleY}px`,
+        width: `${session.width / scaleX}px`,
+        height: `${session.height / scaleY}px`,
+      }
+    : undefined;
   const imageUrl = session ? convertFileSrc(session.imagePath) : null;
   const hasSelection = Boolean(selection && selection.width > 0 && selection.height > 0);
 
@@ -143,8 +159,8 @@ export default function ScreenshotApp() {
     >
       {imageUrl && (
         <img
-          ref={imageRef}
           className="shot-image"
+          style={imageStyle}
           src={imageUrl}
           alt=""
           draggable={false}

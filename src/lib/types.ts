@@ -93,6 +93,10 @@ export interface ScreenshotSession {
   imagePath: string;
   width: number;
   height: number;
+  offsetX: number;
+  offsetY: number;
+  sliceWidth: number;
+  sliceHeight: number;
 }
 
 export interface UpdateInfo {

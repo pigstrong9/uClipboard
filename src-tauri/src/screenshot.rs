@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use image::{ImageFormat, Rgba, RgbaImage};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
-    WindowEvent,
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+#[cfg(not(target_os = "macos"))]
+use tauri::{PhysicalPosition, PhysicalSize};
 
 use crate::clipboard::source::{ClipboardSource, SystemClipboard};
 use crate::state::AppState;
@@ -15,18 +16,47 @@ const WINDOW: &str = "screenshot";
 /// Keep a single capture under ~480 MB of RGBA before the PNG is written.
 const MAX_SCREEN_PIXELS: u64 = 120_000_000;
 
+/// One overlay window per display. macOS refuses to render a single window across
+/// two displays, so each display gets its own window showing its slice of the canvas.
+#[derive(Clone)]
+pub struct OverlaySlice {
+    pub label: String,
+    /// Offset of this slice inside the capture canvas, in canvas pixels.
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// Placement in screen units as reported by the capture: points on macOS,
+    /// physical pixels elsewhere.
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
 pub struct ScreenshotSession {
-    path: PathBuf,
-    width: u32,
-    height: u32,
+    pub path: PathBuf,
+    /// Canvas size in pixels.
+    pub width: u32,
+    pub height: u32,
+    pub slices: Vec<OverlaySlice>,
 }
 
 struct Capture {
     path: PathBuf,
     width: u32,
     height: u32,
-    origin_x: i32,
-    origin_y: i32,
+    slices: Vec<OverlaySlice>,
+}
+
+struct MonitorShot {
+    x_pts: i32,
+    y_pts: i32,
+    w_pts: u32,
+    h_pts: u32,
+    x_px: i32,
+    y_px: i32,
+    image: RgbaImage,
 }
 
 #[derive(serde::Serialize)]
@@ -35,6 +65,10 @@ pub struct ScreenshotSessionInfo {
     image_path: String,
     width: u32,
     height: u32,
+    offset_x: i32,
+    offset_y: i32,
+    slice_width: u32,
+    slice_height: u32,
 }
 
 pub fn trigger(app: AppHandle) {
@@ -48,9 +82,6 @@ pub fn trigger(app: AppHandle) {
 }
 
 async fn start(app: AppHandle) -> Result<(), String> {
-    if app.get_webview_window(WINDOW).is_some() {
-        return Err("screenshot.busy".to_string());
-    }
     {
         let state = app.state::<AppState>();
         let guard = state
@@ -62,6 +93,14 @@ async fn start(app: AppHandle) -> Result<(), String> {
         }
     }
 
+    // Without screen recording permission macOS hands back a wallpaper-only image
+    // instead of failing, so the overlay would come up with nothing in it.
+    #[cfg(target_os = "macos")]
+    if crate::platform::screen_capture_trusted() == Some(false) {
+        crate::platform::request_screen_capture_access();
+        return Err("screenshot.permission".to_string());
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -71,6 +110,11 @@ async fn start(app: AppHandle) -> Result<(), String> {
 
     let media_dir = app.state::<AppState>().media_dir.clone();
     let capture = tauri::async_runtime::spawn_blocking(move || {
+        // The macOS capture path composites the pointer into the image. Hide it before
+        // the settle delay so it is gone from every composited frame by capture time,
+        // even if the pointer is still moving as the shortcut fires.
+        #[cfg(target_os = "macos")]
+        let _cursor = CursorGuard::hide();
         // Give the compositor a moment to actually remove our windows from the screen.
         std::thread::sleep(Duration::from_millis(200));
         capture_virtual_screen(&media_dir)
@@ -91,10 +135,16 @@ async fn start(app: AppHandle) -> Result<(), String> {
             path: capture.path.clone(),
             width: capture.width,
             height: capture.height,
+            slices: capture.slices.clone(),
         });
     }
 
-    let built = WebviewWindowBuilder::new(&app, WINDOW, WebviewUrl::App("screenshot.html".into()))
+    for slice in &capture.slices {
+        let built = WebviewWindowBuilder::new(
+            &app,
+            &slice.label,
+            WebviewUrl::App("screenshot.html".into()),
+        )
         .title("Screenshot")
         .decorations(false)
         .always_on_top(true)
@@ -104,54 +154,93 @@ async fn start(app: AppHandle) -> Result<(), String> {
         .focused(false)
         .build();
 
-    let window = match built {
-        Ok(window) => window,
-        Err(error) => {
-            log::error!("build screenshot window failed: {error}");
-            cleanup(&app);
-            return Err("screenshot.window_failed".to_string());
+        let window = match built {
+            Ok(window) => window,
+            Err(error) => {
+                log::error!("build screenshot window failed: {error}");
+                close_all(&app);
+                cleanup(&app);
+                return Err("screenshot.window_failed".to_string());
+            }
+        };
+
+        // macOS places each overlay through AppKit right before showing it, because
+        // tao's physical/logical round-trip shifts the frame. Other platforms keep the
+        // single canvas-sized window.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window.set_position(PhysicalPosition::new(slice.x as i32, slice.y as i32));
+            let _ = window.set_size(PhysicalSize::new(slice.w as u32, slice.h as u32));
         }
-    };
 
-    if let Err(error) =
-        window.set_position(PhysicalPosition::new(capture.origin_x, capture.origin_y))
-    {
-        log::error!("position screenshot window failed: {error}");
-        let _ = window.destroy();
-        cleanup(&app);
-        return Err("screenshot.window_failed".to_string());
-    }
-    if let Err(error) = window.set_size(PhysicalSize::new(capture.width, capture.height)) {
-        log::error!("size screenshot window failed: {error}");
-        let _ = window.destroy();
-        cleanup(&app);
-        return Err("screenshot.window_failed".to_string());
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                cleanup(&handle);
+            }
+        });
     }
 
-    let handle = app.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
-            cleanup(&handle);
-        }
-    });
-
-    // Keep the overlay hidden until the frontend confirms the capture image has
+    // Keep the overlays hidden until the frontend confirms the capture image has
     // loaded. Showing it earlier paints a black fullscreen surface (body background
     // plus dim layer) ahead of the image, which reads as a screen flash to black.
-    // A bounded fallback still reveals the window so Esc stays usable if the image
-    // is slow or the webview never reports back.
+    // A bounded fallback still reveals them so Esc stays usable if the image is slow
+    // or a webview never reports back.
     let fallback = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1500));
-        if let Some(window) = fallback.get_webview_window(WINDOW) {
-            if window.is_visible().unwrap_or(false) {
-                return;
+        let handle = fallback.clone();
+        let _ = fallback.run_on_main_thread(move || {
+            let labels: Vec<String> = handle
+                .try_state::<AppState>()
+                .and_then(|state| {
+                    state
+                        .screenshot
+                        .lock()
+                        .ok()
+                        .map(|guard| guard.as_ref().map(labels_of).unwrap_or_default())
+                })
+                .unwrap_or_default();
+            for label in labels {
+                let hidden = handle
+                    .get_webview_window(&label)
+                    .map(|window| !window.is_visible().unwrap_or(false))
+                    .unwrap_or(false);
+                if hidden {
+                    show_overlay(&handle, &label);
+                }
             }
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        });
     });
     Ok(())
+}
+
+fn labels_of(session: &ScreenshotSession) -> Vec<String> {
+    session.slices.iter().map(|slice| slice.label.clone()).collect()
+}
+
+/// Places and shows one capture overlay. Must run on the main thread.
+fn show_overlay(app: &AppHandle, label: &str) {
+    let rect = app.try_state::<AppState>().and_then(|state| {
+        state.screenshot.lock().ok().and_then(|guard| {
+            guard.as_ref().and_then(|session| {
+                session
+                    .slices
+                    .iter()
+                    .find(|slice| slice.label == label)
+                    .map(|slice| (slice.x, slice.y, slice.w, slice.h))
+            })
+        })
+    });
+    if let Some(window) = app.get_webview_window(label) {
+        if let Some((x, y, w, h)) = rect {
+            crate::platform::place_overlay(&window, x, y, w, h);
+        }
+        let _ = window.show();
+        let _ = window.set_focus();
+        crate::platform::focus_webview(&window);
+    }
+    crate::platform::activate_app();
 }
 
 #[tauri::command]
@@ -160,7 +249,10 @@ pub async fn start_region_capture(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn screenshot_session(app: AppHandle) -> Result<ScreenshotSessionInfo, String> {
+pub fn screenshot_session(
+    window: WebviewWindow,
+    app: AppHandle,
+) -> Result<ScreenshotSessionInfo, String> {
     let state = app.state::<AppState>();
     let guard = state
         .screenshot
@@ -169,27 +261,33 @@ pub fn screenshot_session(app: AppHandle) -> Result<ScreenshotSessionInfo, Strin
     let session = guard
         .as_ref()
         .ok_or_else(|| "screenshot.session_missing".to_string())?;
+    let slice = session
+        .slices
+        .iter()
+        .find(|slice| slice.label == window.label())
+        .ok_or_else(|| "screenshot.session_missing".to_string())?;
     Ok(ScreenshotSessionInfo {
         image_path: session.path.to_string_lossy().into_owned(),
         width: session.width,
         height: session.height,
+        offset_x: slice.offset_x,
+        offset_y: slice.offset_y,
+        slice_width: slice.width,
+        slice_height: slice.height,
     })
 }
 
 #[tauri::command]
-pub fn screenshot_ready(app: AppHandle) {
-    if let Some(window) = app.get_webview_window(WINDOW) {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+pub fn screenshot_ready(window: WebviewWindow, app: AppHandle) {
+    let label = window.label().to_string();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || show_overlay(&handle, &label));
 }
 
 #[tauri::command]
 pub fn cancel_region_capture(app: AppHandle) {
+    close_all(&app);
     cleanup(&app);
-    if let Some(window) = app.get_webview_window(WINDOW) {
-        let _ = window.close();
-    }
 }
 
 #[tauri::command]
@@ -210,6 +308,7 @@ pub async fn capture_region(
             .take()
             .ok_or_else(|| "screenshot.session_missing".to_string())?
     };
+    let labels = labels_of(&session);
 
     let path = session.path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -242,8 +341,10 @@ pub async fn capture_region(
         "screenshot.capture_failed".to_string()
     })?;
 
-    if let Some(window) = app.get_webview_window(WINDOW) {
-        let _ = window.close();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.close();
+        }
     }
     remove_capture(path);
 
@@ -262,6 +363,24 @@ fn fail(app: &AppHandle, code: &str) {
     let _ = app.emit("screenshot-error", code.to_string());
 }
 
+fn close_all(app: &AppHandle) {
+    let labels = app
+        .try_state::<AppState>()
+        .and_then(|state| {
+            state
+                .screenshot
+                .lock()
+                .ok()
+                .map(|guard| guard.as_ref().map(labels_of).unwrap_or_default())
+        })
+        .unwrap_or_default();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.close();
+        }
+    }
+}
+
 fn cleanup(app: &AppHandle) {
     let state = app.state::<AppState>();
     let session = state
@@ -270,7 +389,13 @@ fn cleanup(app: &AppHandle) {
         .ok()
         .and_then(|mut guard| guard.take());
     if let Some(session) = session {
+        let labels = labels_of(&session);
         remove_capture(session.path);
+        for label in labels {
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = window.close();
+            }
+        }
     }
 }
 
@@ -301,24 +426,26 @@ fn capture_virtual_screen(media_dir: &Path) -> Result<Capture, String> {
         return Err("screenshot.capture_failed".to_string());
     }
 
-    let mut shots: Vec<(i32, i32, RgbaImage)> = Vec::new();
+    let mut shots: Vec<MonitorShot> = Vec::new();
     let mut total_pixels = 0u64;
     for monitor in monitors {
         let scale = monitor.scale_factor().unwrap_or(1.0);
-        let x = physical_origin(
-            monitor.x().map_err(|error| {
-                log::error!("monitor x failed: {error}");
-                "screenshot.capture_failed".to_string()
-            })?,
-            scale,
-        );
-        let y = physical_origin(
-            monitor.y().map_err(|error| {
-                log::error!("monitor y failed: {error}");
-                "screenshot.capture_failed".to_string()
-            })?,
-            scale,
-        );
+        let x_pts = monitor.x().map_err(|error| {
+            log::error!("monitor x failed: {error}");
+            "screenshot.capture_failed".to_string()
+        })?;
+        let y_pts = monitor.y().map_err(|error| {
+            log::error!("monitor y failed: {error}");
+            "screenshot.capture_failed".to_string()
+        })?;
+        let w_pts = monitor.width().map_err(|error| {
+            log::error!("monitor width failed: {error}");
+            "screenshot.capture_failed".to_string()
+        })?;
+        let h_pts = monitor.height().map_err(|error| {
+            log::error!("monitor height failed: {error}");
+            "screenshot.capture_failed".to_string()
+        })?;
         let image = monitor.capture_image().map_err(|error| {
             log::error!("capture monitor failed: {error}");
             "screenshot.capture_failed".to_string()
@@ -329,7 +456,15 @@ fn capture_virtual_screen(media_dir: &Path) -> Result<Capture, String> {
             return Err("screenshot.too_large".to_string());
         }
         if image.width() > 0 && image.height() > 0 {
-            shots.push((x, y, image));
+            shots.push(MonitorShot {
+                x_pts,
+                y_pts,
+                w_pts,
+                h_pts,
+                x_px: physical_origin(x_pts, scale),
+                y_px: physical_origin(y_pts, scale),
+                image,
+            });
         }
     }
     if shots.is_empty() {
@@ -338,20 +473,53 @@ fn capture_virtual_screen(media_dir: &Path) -> Result<Capture, String> {
 
     let rects: Vec<(i32, i32, u32, u32)> = shots
         .iter()
-        .map(|(x, y, image)| (*x, *y, image.width(), image.height()))
+        .map(|shot| (shot.x_px, shot.y_px, shot.image.width(), shot.image.height()))
         .collect();
     let (origin_x, origin_y, width, height) =
         canvas_bounds(&rects).ok_or_else(|| "screenshot.too_large".to_string())?;
 
     let mut canvas = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 255]));
-    for (x, y, image) in shots {
+    for shot in &shots {
         image::imageops::overlay(
             &mut canvas,
-            &image,
-            i64::from(x - origin_x),
-            i64::from(y - origin_y),
+            &shot.image,
+            i64::from(shot.x_px - origin_x),
+            i64::from(shot.y_px - origin_y),
         );
     }
+
+    #[cfg(target_os = "macos")]
+    let slices = shots
+        .iter()
+        .enumerate()
+        .map(|(index, shot)| OverlaySlice {
+            label: if index == 0 {
+                WINDOW.to_string()
+            } else {
+                format!("{WINDOW}-{index}")
+            },
+            offset_x: shot.x_px - origin_x,
+            offset_y: shot.y_px - origin_y,
+            width: shot.image.width(),
+            height: shot.image.height(),
+            x: f64::from(shot.x_pts),
+            y: f64::from(shot.y_pts),
+            w: f64::from(shot.w_pts),
+            h: f64::from(shot.h_pts),
+        })
+        .collect();
+    #[cfg(not(target_os = "macos"))]
+    let slices = vec![OverlaySlice {
+        label: WINDOW.to_string(),
+        offset_x: 0,
+        offset_y: 0,
+        width,
+        height,
+        x: f64::from(origin_x),
+        y: f64::from(origin_y),
+        w: f64::from(width),
+        h: f64::from(height),
+    }];
 
     let images = media_dir.join("images");
     std::fs::create_dir_all(&images).map_err(|error| {
@@ -375,14 +543,71 @@ fn capture_virtual_screen(media_dir: &Path) -> Result<Capture, String> {
         path,
         width,
         height,
-        origin_x,
-        origin_y,
+        slices,
     })
 }
 
 #[cfg(target_os = "macos")]
 fn physical_origin(value: i32, scale: f32) -> i32 {
     (value as f32 * scale).round() as i32
+}
+
+/// Hides the system pointer on every display until dropped. The hide/show calls are
+/// reference counted per display, so the guard must pair each one exactly once.
+#[cfg(target_os = "macos")]
+struct CursorGuard {
+    displays: Vec<u32>,
+}
+
+#[cfg(target_os = "macos")]
+impl CursorGuard {
+    fn hide() -> Self {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGGetActiveDisplayList(
+                max_displays: u32,
+                displays: *mut u32,
+                count: *mut u32,
+            ) -> i32;
+            fn CGDisplayHideCursor(display: u32) -> i32;
+        }
+        let mut displays: Vec<u32> = Vec::new();
+        // SAFETY: the list is filled by CoreGraphics into a buffer sized from its own
+        // reported count, and hide/show are paired in Drop.
+        unsafe {
+            let mut count = 0u32;
+            if CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) != 0 {
+                return Self { displays };
+            }
+            let mut ids = vec![0u32; count as usize];
+            let mut actual = count;
+            if CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut actual) != 0 {
+                return Self { displays };
+            }
+            ids.truncate(actual as usize);
+            for id in &ids {
+                CGDisplayHideCursor(*id);
+            }
+            displays = ids;
+        }
+        Self { displays }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for CursorGuard {
+    fn drop(&mut self) {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGDisplayShowCursor(display: u32) -> i32;
+        }
+        // SAFETY: only decrements the hide counter incremented in `hide`.
+        unsafe {
+            for id in &self.displays {
+                CGDisplayShowCursor(*id);
+            }
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

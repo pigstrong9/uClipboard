@@ -54,6 +54,25 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
         center_on_cursor(&window);
         let _ = window.show();
         let _ = window.set_focus();
+        // `show` from a worker thread is queued on the main thread, so activation has to
+        // be queued behind it or the app is asked to activate while still windowless.
+        #[cfg(target_os = "macos")]
+        {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                crate::platform::activate_app();
+                // Window focus alone leaves the WKWebView out of the responder chain on
+                // macOS, so keystrokes never reach the page until the user clicks.
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.set_focus();
+                    crate::platform::focus_webview(&window);
+                }
+            });
+        }
         let _ = app.emit("main-shown", ());
     }
 }
@@ -153,6 +172,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
+            // Menu bar app: no Dock icon, mirroring skipTaskbar on Windows.
+            #[cfg(target_os = "macos")]
+            let _ = app
+                .handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let app_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_dir)?;
             let store = storage::Store::open(&app_dir.join("uclipboard.db"))?;
@@ -193,9 +218,11 @@ pub fn run() {
                 use tauri_plugin_autostart::ManagerExt;
                 let manager = app.autolaunch();
                 if loaded.auto_start {
-                    let _ = manager.enable();
-                } else {
-                    let _ = manager.disable();
+                    if let Err(error) = manager.enable() {
+                        log::error!("enable autostart failed: {error}");
+                    }
+                } else if let Err(error) = manager.disable() {
+                    log::error!("disable autostart failed: {error}");
                 }
             }
 
@@ -264,7 +291,10 @@ pub fn run() {
                             let _ = window.hide();
                         }
                     }
-                    WindowEvent::Focused(false) => {
+                    WindowEvent::Focused(focused) => {
+                        if *focused {
+                            return;
+                        }
                         let state = handle.try_state::<state::AppState>();
                         let hide_on_blur = state
                             .as_ref()
@@ -351,6 +381,10 @@ pub fn run() {
             commands::hide_main,
             commands::accessibility_status,
             commands::open_accessibility_settings,
+            commands::request_accessibility_permission,
+            commands::screenshot_permission_status,
+            commands::request_screenshot_permission,
+            commands::open_screen_recording_settings,
             commands::open_logs_dir,
             commands::check_update,
             commands::install_update,

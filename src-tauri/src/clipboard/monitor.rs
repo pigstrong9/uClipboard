@@ -257,13 +257,11 @@ fn monitor_loop(
 
         // Privacy and the ignore list are checked before reading, so concealed content
         // is never pulled into memory or decoded as an image first.
-        let owner = platform::clipboard_owner_app_name();
-        if let Some(name) = owner.as_deref() {
-            if snapshot.ignores_app(name) {
-                advance_sequence(&mut last_sequence, sequence);
-                clear_error(&app, &mut last_error);
-                continue;
-            }
+        let owner_names = platform::clipboard_owner_app_names();
+        if owner_names.iter().any(|name| snapshot.ignores_app(name)) {
+            advance_sequence(&mut last_sequence, sequence);
+            clear_error(&app, &mut last_error);
+            continue;
         }
 
         match source.privacy() {
@@ -332,7 +330,7 @@ fn monitor_loop(
             last_hash = Some(hash);
             continue;
         };
-        prepared.item.source_app = owner;
+        prepared.item.source_app = owner_names.first().cloned();
         let hash = prepared.item.hash.clone();
 
         let result = store.lock().map(|store| store.insert(prepared.item));

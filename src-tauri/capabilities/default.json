@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for the main window",
-  "windows": ["main", "transfer", "screenshot"],
+  "windows": ["main", "transfer", "screenshot", "screenshot-*"],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",

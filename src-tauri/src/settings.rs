@@ -106,25 +106,33 @@ impl Settings {
     }
 
     pub fn ignores_app(&self, process: &str) -> bool {
-        let name = process
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(process)
-            .trim()
-            .to_ascii_lowercase();
-        if name.is_empty() {
+        let Some(name) = normalize_process_name(process) else {
             return false;
-        }
-        self.ignored_apps.iter().any(|app| {
-            let configured = app
-                .rsplit(['\\', '/'])
-                .next()
-                .unwrap_or(app)
-                .trim()
-                .to_ascii_lowercase();
-            configured == name
-        })
+        };
+        self.ignored_apps
+            .iter()
+            .filter_map(|app| normalize_process_name(app))
+            .any(|configured| configured == name)
     }
+}
+
+/// Reduces a process path or bundle name ("KeePassXC.exe", "/Applications/Safari.app")
+/// to the comparable stem so entries match across platforms.
+fn normalize_process_name(process: &str) -> Option<String> {
+    let base = process
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(process)
+        .trim()
+        .to_ascii_lowercase();
+    if base.is_empty() {
+        return None;
+    }
+    let stem = base
+        .strip_suffix(".exe")
+        .or_else(|| base.strip_suffix(".app"))
+        .unwrap_or(&base);
+    Some(stem.to_string())
 }
 
 pub fn load(path: &Path) -> Settings {
@@ -233,6 +241,19 @@ mod tests {
         .normalized();
         assert!(settings.ignores_app("C:\\Program Files\\KeePassXC\\KeePassXC.exe"));
         assert!(!settings.ignores_app("notepad.exe"));
+    }
+
+    #[test]
+    fn matches_ignored_app_across_bundle_suffixes() {
+        let settings = Settings {
+            ignored_apps: vec!["Safari.app".to_string(), "1Password".to_string()],
+            ..Settings::default()
+        }
+        .normalized();
+        assert!(settings.ignores_app("Safari"));
+        assert!(settings.ignores_app("/Applications/Safari.app"));
+        assert!(settings.ignores_app("1Password.app"));
+        assert!(!settings.ignores_app("Safari Technology Preview"));
     }
 
     #[test]
