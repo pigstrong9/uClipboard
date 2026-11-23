@@ -28,6 +28,7 @@ export function SideRail({
           type="button"
           className="quick-btn"
           title={t('copy')}
+          aria-label={t('copy')}
           onClick={onCopy}
           disabled={!hasSelection}
         >
@@ -37,6 +38,7 @@ export function SideRail({
           type="button"
           className="quick-btn"
           title={t('favorite')}
+          aria-label={t('favorite')}
           onClick={onFavorite}
           disabled={!hasSelection}
         >
@@ -46,6 +48,7 @@ export function SideRail({
           type="button"
           className="quick-btn"
           title={t('selectTransfer')}
+          aria-label={t('selectTransfer')}
           data-count={selectionCount > 0 ? selectionCount : undefined}
           onClick={onTransfer}
         >
@@ -53,10 +56,22 @@ export function SideRail({
         </button>
       </div>
       <div className="utility-rail">
-        <button type="button" className="icon-btn rail-btn" title={t('settings')} onClick={onSettings}>
+        <button
+          type="button"
+          className="icon-btn rail-btn"
+          title={t('settings')}
+          aria-label={t('settings')}
+          onClick={onSettings}
+        >
           <Icon name="gear" />
         </button>
-        <button type="button" className="icon-btn rail-btn" title={t('clearHistory')} onClick={onClear}>
+        <button
+          type="button"
+          className="icon-btn rail-btn"
+          title={t('clearHistory')}
+          aria-label={t('clearHistory')}
+          onClick={onClear}
+        >
           <Icon name="trash" />
         </button>
       </div>

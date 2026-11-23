@@ -12,17 +12,39 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+use crate::clipboard::hash::{hash_bytes, hash_files};
 use crate::clipboard::source::{ClipboardSource, SystemClipboard};
 use crate::media;
-use crate::models::{ClipItem, ClipKind};
+use crate::models::{ClipItem, ClipKind, ClipSummary};
 use crate::settings::{self, Settings as AppSettings};
 use crate::state::{AppState, SharedState};
 
-fn with_thumb(mut item: ClipItem, shared: &SharedState) -> ClipItem {
+fn with_thumb_path(mut item: ClipItem, shared: &SharedState) -> ClipItem {
     if item.kind == ClipKind::Image {
-        item.thumb_data_url = media::thumb_data_url(&shared.media_dir, &item.content);
+        item.thumb_path = media::thumb_path(&shared.media_dir, &item.content);
     }
     item
+}
+
+/// Hash of the bytes that will end up on the clipboard, used to distinguish our own
+/// write from a real copy made right afterwards.
+fn clipboard_hash(item: &ClipItem, media_dir: &std::path::Path) -> Option<String> {
+    match item.kind {
+        ClipKind::Text => Some(hash_bytes(item.content.as_bytes())),
+        ClipKind::Files => serde_json::from_str::<Vec<String>>(&item.content)
+            .ok()
+            .map(|files| {
+                files
+                    .into_iter()
+                    .filter(|path| !path.is_empty() && std::path::Path::new(path).exists())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|files| !files.is_empty())
+            .map(|files| hash_files(&files)),
+        ClipKind::Image => std::fs::read(media_dir.join(&item.content))
+            .ok()
+            .map(|bytes| hash_bytes(&bytes)),
+    }
 }
 
 fn cleanup_media(shared: &SharedState) -> Result<(), String> {
@@ -34,12 +56,37 @@ fn cleanup_media(shared: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
-fn arm_suppression(shared: &SharedState) -> Result<(), String> {
-    shared
-        .suppress
-        .lock()
-        .map_err(|e| e.to_string())?
-        .arm(Duration::from_millis(1500));
+/// Applies new history/retention limits immediately instead of waiting for the next
+/// capture or the six-hour maintenance tick.
+fn prune_history(shared: &SharedState, settings: &AppSettings) {
+    let removed = {
+        let Ok(store) = shared.store.lock() else {
+            return;
+        };
+        match store.prune(settings.history_limit, settings.retention_days) {
+            Ok(images) => images,
+            Err(error) => {
+                log::error!("settings prune failed: {error}");
+                return;
+            }
+        }
+    };
+    media::remove_media_files(&shared.media_dir, &removed);
+    if let Err(error) = cleanup_media(shared) {
+        log::warn!("media cleanup skipped after settings change: {error}");
+    }
+}
+
+fn arm_suppression(
+    shared: &SharedState,
+    hash: Option<String>,
+    allow_mismatch: bool,
+) -> Result<(), String> {
+    shared.suppress.lock().map_err(|e| e.to_string())?.arm(
+        Duration::from_millis(1500),
+        hash,
+        allow_mismatch,
+    );
     Ok(())
 }
 
@@ -57,17 +104,19 @@ fn write_item_to_clipboard(shared: &SharedState, id: &str) -> Result<ClipItem, S
         .unwrap_or(false);
 
     let source = SystemClipboard;
+    let hash = clipboard_hash(&item, &shared.media_dir);
+    let allow_mismatch = item.kind == ClipKind::Image;
     if !source.write_with_options(&item, &shared.media_dir, plain_text) {
-        return Err("写入剪贴板失败".to_string());
+        return Err("clipboard.write_failed".to_string());
     }
-    arm_suppression(shared)?;
+    arm_suppression(shared, hash, allow_mismatch)?;
 
     let updated = {
         let store = shared.store.lock().map_err(|e| e.to_string())?;
         store.touch(id).map_err(|e| e.to_string())?;
         store.get(id).map_err(|e| e.to_string())?
     };
-    Ok(with_thumb(updated, shared))
+    Ok(with_thumb_path(updated, shared))
 }
 
 #[cfg(target_os = "windows")]
@@ -75,7 +124,7 @@ fn send_paste_shortcut(_enigo: &mut ()) -> Result<(), String> {
     if crate::platform::send_paste_keys() {
         Ok(())
     } else {
-        Err("发送 Ctrl+V 失败".to_string())
+        Err("paste.send_failed".to_string())
     }
 }
 
@@ -106,6 +155,22 @@ fn send_paste_shortcut(enigo: &mut Enigo) -> Result<(), String> {
     Ok(())
 }
 
+/// macOS needs the whole application deactivated, not just its window hidden, before a
+/// synthetic Cmd+V will reach the previous foreground app.
+#[cfg(target_os = "macos")]
+fn hide_before_paste(app: &tauri::AppHandle, window: &WebviewWindow) {
+    let _ = window.hide();
+    // AppHandle has no app-level hide in Tauri 2; dispatch NSApplication.hide to the
+    // main thread instead.
+    let handle = app.clone();
+    let _ = handle.run_on_main_thread(crate::platform::hide_app);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hide_before_paste(_app: &tauri::AppHandle, window: &WebviewWindow) {
+    let _ = window.hide();
+}
+
 fn transfer_items_inner(shared: &SharedState, ids: &[String]) -> Result<Vec<ClipItem>, String> {
     let items = {
         let store = shared.store.lock().map_err(|e| e.to_string())?;
@@ -115,7 +180,7 @@ fn transfer_items_inner(shared: &SharedState, ids: &[String]) -> Result<Vec<Clip
     };
     Ok(items
         .into_iter()
-        .map(|item| with_thumb(item, shared))
+        .map(|item| with_thumb_path(item, shared))
         .collect())
 }
 
@@ -184,33 +249,57 @@ fn ensure_transfer_window(app: &tauri::AppHandle) -> Result<WebviewWindow, Strin
 }
 
 #[tauri::command]
-pub fn list_items(
+pub async fn list_items(
     state: State<'_, AppState>,
     tab: String,
     query: String,
-) -> Result<Vec<ClipItem>, String> {
+) -> Result<Vec<ClipSummary>, String> {
     let shared = state.shared();
-    let limit = shared
-        .settings
-        .lock()
-        .map(|settings| {
-            if settings.history_limit == 0 {
-                -1
-            } else {
-                settings.history_limit as i64
-            }
-        })
-        .unwrap_or(500);
-    let items = shared
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .list(&tab, &query, limit)
-        .map_err(|e| e.to_string())?;
-    Ok(items
-        .into_iter()
-        .map(|item| with_thumb(item, &shared))
-        .collect())
+    // Favorites and pinned entries are exempt from pruning, so they must not be hidden
+    // by the history limit either.
+    let limit = if tab == "favorite" {
+        -1
+    } else {
+        shared
+            .settings
+            .lock()
+            .map(|settings| {
+                if settings.history_limit == 0 {
+                    -1
+                } else {
+                    settings.history_limit as i64
+                }
+            })
+            .unwrap_or(500)
+    };
+    // The query hits SQLite and the thumbnail lookup touches the filesystem; keep both
+    // off the webview's command thread so a large history cannot stall the UI.
+    tauri::async_runtime::spawn_blocking(move || {
+        shared
+            .store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .list_summaries(&tab, &query, limit, &shared.media_dir)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_item(state: State<'_, AppState>, id: String) -> Result<ClipItem, String> {
+    let shared = state.shared();
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = shared
+            .store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+            .map_err(|e| e.to_string())?;
+        Ok(with_thumb_path(item, &shared))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -227,7 +316,7 @@ pub fn toggle_favorite(
         .toggle_favorite(&id)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("transfer-changed", ());
-    Ok(with_thumb(item, &shared))
+    Ok(with_thumb_path(item, &shared))
 }
 
 #[tauri::command]
@@ -244,7 +333,7 @@ pub fn toggle_pin(
         .toggle_pin(&id)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("transfer-changed", ());
-    Ok(with_thumb(item, &shared))
+    Ok(with_thumb_path(item, &shared))
 }
 
 #[tauri::command]
@@ -320,35 +409,98 @@ pub async fn update_settings(
         .map_err(|e| e.to_string())?
         .clone();
 
-    let autostart_changed = previous.auto_start != normalized.auto_start;
-    if autostart_changed {
-        apply_autostart(&app, normalized.auto_start)?;
+    if normalized.hotkeys_conflict() {
+        return Err("settings.hotkey_conflict".to_string());
     }
 
-    if previous.hotkey != normalized.hotkey {
+    let autostart_changed = previous.auto_start != normalized.auto_start;
+    if autostart_changed {
+        apply_autostart(&app, normalized.auto_start).map_err(|error| {
+            log::error!("apply autostart failed: {error}");
+            "settings.autostart_failed".to_string()
+        })?;
+    }
+
+    let hotkey_changed = previous.hotkey != normalized.hotkey;
+    let screenshot_hotkey_changed = previous.screenshot_hotkey != normalized.screenshot_hotkey;
+    if hotkey_changed || screenshot_hotkey_changed {
         let manager = app.global_shortcut();
-        let _ = manager.unregister(previous.hotkey.as_str());
-        if let Err(error) = manager.register(normalized.hotkey.as_str()) {
+        if hotkey_changed {
+            let _ = manager.unregister(previous.hotkey.as_str());
+        }
+        if screenshot_hotkey_changed {
+            let _ = manager.unregister(previous.screenshot_hotkey.as_str());
+        }
+
+        let mut failure = None;
+        let mut screenshot_failed = false;
+        if hotkey_changed {
+            if let Err(error) = manager.register(normalized.hotkey.as_str()) {
+                failure = Some(error.to_string());
+            }
+        }
+        if failure.is_none() && screenshot_hotkey_changed {
+            if let Err(error) = manager.register(normalized.screenshot_hotkey.as_str()) {
+                failure = Some(error.to_string());
+                screenshot_failed = true;
+            }
+        }
+
+        if let Some(error) = failure {
+            if hotkey_changed {
+                let _ = manager.unregister(normalized.hotkey.as_str());
+            }
+            if screenshot_hotkey_changed {
+                let _ = manager.unregister(normalized.screenshot_hotkey.as_str());
+            }
             let _ = manager.register(previous.hotkey.as_str());
+            let _ = manager.register(previous.screenshot_hotkey.as_str());
             if autostart_changed {
                 let _ = apply_autostart(&app, previous.auto_start);
             }
-            return Err(format!("快捷键注册失败: {error}"));
+            log::error!("register hotkey failed: {error}");
+            return Err(if screenshot_failed {
+                "screenshot.hotkey_failed"
+            } else {
+                "settings.hotkey_failed"
+            }
+            .to_string());
         }
     }
 
     if let Err(error) = settings::save(&app_state.config_path, &normalized) {
-        if previous.hotkey != normalized.hotkey {
+        if hotkey_changed || screenshot_hotkey_changed {
             let manager = app.global_shortcut();
-            let _ = manager.unregister(normalized.hotkey.as_str());
+            if hotkey_changed {
+                let _ = manager.unregister(normalized.hotkey.as_str());
+            }
+            if screenshot_hotkey_changed {
+                let _ = manager.unregister(normalized.screenshot_hotkey.as_str());
+            }
             let _ = manager.register(previous.hotkey.as_str());
+            let _ = manager.register(previous.screenshot_hotkey.as_str());
         }
         if previous.auto_start != normalized.auto_start {
             let _ = apply_autostart(&app, previous.auto_start);
         }
-        return Err(error);
+        log::error!("save settings failed: {error}");
+        return Err("settings.save_failed".to_string());
     }
     *app_state.settings.lock().map_err(|e| e.to_string())? = normalized.clone();
+
+    if previous.history_limit != normalized.history_limit
+        || previous.retention_days != normalized.retention_days
+    {
+        let shared = app_state.shared();
+        let snapshot = normalized.clone();
+        if let Err(error) =
+            tauri::async_runtime::spawn_blocking(move || prune_history(&shared, &snapshot)).await
+        {
+            log::error!("settings prune task failed: {error}");
+        }
+        let _ = app.emit("clipboard-changed", ());
+    }
+
     if previous.language != normalized.language {
         let _ = crate::tray::refresh(&app);
     }
@@ -369,7 +521,7 @@ pub fn toggle_monitoring(app: tauri::AppHandle) -> Result<bool, String> {
         if let Ok(mut guard) = state.settings.lock() {
             guard.monitor_paused = previous_paused;
         }
-        return Err("保存设置失败".to_string());
+        return Err("settings.save_failed".to_string());
     }
     let _ = app.emit("settings-changed", ());
     Ok(updated.monitor_paused)
@@ -392,6 +544,31 @@ fn apply_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> 
 pub fn hide_main(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+pub fn accessibility_status() -> Option<bool> {
+    crate::platform::accessibility_trusted()
+}
+
+#[tauri::command]
+pub fn open_accessibility_settings() -> bool {
+    crate::platform::open_accessibility_settings()
+}
+
+#[tauri::command]
+pub fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    if crate::platform::open_path(&dir) {
+        Ok(())
+    } else {
+        Err("logs.open_failed".to_string())
     }
 }
 
@@ -427,7 +604,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
         .check()
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "当前已是最新版本".to_string())?;
+        .ok_or_else(|| "update.not_available".to_string())?;
     update
         .download_and_install(|_chunk, _total| {}, || {})
         .await
@@ -455,21 +632,31 @@ pub async fn paste_item(
     id: String,
 ) -> Result<ClipItem, String> {
     let shared = state.shared();
+    #[cfg(target_os = "macos")]
+    if crate::platform::accessibility_trusted() == Some(false) {
+        return Err("paste.accessibility_required".to_string());
+    }
     let window = app
         .get_webview_window("main")
-        .ok_or_else(|| "主窗口不存在".to_string())?;
+        .ok_or_else(|| "window.missing".to_string())?;
     let task_window = window.clone();
+    let task_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<ClipItem, String> {
         let updated = write_item_to_clipboard(&shared, &id)?;
         #[cfg(target_os = "windows")]
         let mut enigo = ();
         #[cfg(not(target_os = "windows"))]
-        let mut enigo =
-            Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+        let mut enigo = Enigo::new(&Settings::default()).map_err(|error| {
+            log::error!("init paste failed: {error}");
+            "paste.init_failed".to_string()
+        })?;
 
-        task_window.hide().map_err(|e| e.to_string())?;
+        hide_before_paste(&task_app, &task_window);
         std::thread::sleep(Duration::from_millis(200));
-        send_paste_shortcut(&mut enigo).map_err(|error| format!("自动粘贴失败: {error}"))?;
+        send_paste_shortcut(&mut enigo).map_err(|error| {
+            log::error!("send paste shortcut failed: {error}");
+            "paste.send_failed".to_string()
+        })?;
         Ok(updated)
     })
     .await
@@ -492,9 +679,13 @@ pub async fn paste_transfer_item(
     id: String,
 ) -> Result<ClipItem, String> {
     let shared = state.shared();
+    #[cfg(target_os = "macos")]
+    if crate::platform::accessibility_trusted() == Some(false) {
+        return Err("paste.accessibility_required".to_string());
+    }
     let transfer = app
         .get_webview_window("transfer")
-        .ok_or_else(|| "中转窗口不存在".to_string())?;
+        .ok_or_else(|| "window.missing".to_string())?;
 
     let task_app = app.clone();
     let task_transfer = transfer.clone();
@@ -503,8 +694,10 @@ pub async fn paste_transfer_item(
         #[cfg(target_os = "windows")]
         let mut enigo = ();
         #[cfg(not(target_os = "windows"))]
-        let mut enigo =
-            Enigo::new(&Settings::default()).map_err(|e| format!("初始化粘贴失败: {e}"))?;
+        let mut enigo = Enigo::new(&Settings::default()).map_err(|error| {
+            log::error!("init paste failed: {error}");
+            "paste.init_failed".to_string()
+        })?;
 
         #[cfg(target_os = "windows")]
         {
@@ -524,17 +717,35 @@ pub async fn paste_transfer_item(
             }
         }
 
-        task_transfer.hide().map_err(|e| e.to_string())?;
-        if let Some(main) = task_app.get_webview_window("main") {
-            if main.is_visible().unwrap_or(false) {
-                let _ = main.hide();
+        #[cfg(target_os = "macos")]
+        {
+            // Hiding just the window leaves uClipboard active, so Cmd+V would be sent
+            // back to us instead of the app the user was working in.
+            let handle = task_app.clone();
+            let _ = handle.run_on_main_thread(crate::platform::hide_app);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            task_transfer.hide().map_err(|e| e.to_string())?;
+            if let Some(main) = task_app.get_webview_window("main") {
+                if main.is_visible().unwrap_or(false) {
+                    let _ = main.hide();
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(200));
 
-        send_paste_shortcut(&mut enigo).map_err(|error| format!("自动粘贴失败: {error}"))?;
+        send_paste_shortcut(&mut enigo).map_err(|error| {
+            log::error!("send paste shortcut failed: {error}");
+            "paste.send_failed".to_string()
+        })?;
 
         std::thread::sleep(Duration::from_millis(120));
+        #[cfg(target_os = "macos")]
+        {
+            let handle = task_app.clone();
+            let _ = handle.run_on_main_thread(crate::platform::show_app);
+        }
         task_transfer.show().map_err(|e| e.to_string())?;
         Ok(updated)
     })
@@ -589,6 +800,9 @@ pub async fn open_transfer(
         eprintln!("open_transfer show failed: {e}");
         e.to_string()
     })?;
+    // The window is only hidden when closed, so its React state survives; tell it to
+    // drop the previous search/expand state before new items arrive.
+    app.emit("transfer-opened", ()).map_err(|e| e.to_string())?;
     app.emit("transfer-changed", ())
         .map_err(|e| e.to_string())?;
     transfer_items_inner(&shared, &unique)
@@ -619,7 +833,7 @@ pub async fn copy_transfer(
     let count = tauri::async_runtime::spawn_blocking(move || -> Result<usize, String> {
         let items = transfer_items_inner(&shared, &ids)?;
         if items.is_empty() {
-            return Err("没有可复制的内容".to_string());
+            return Err("clipboard.copy_empty".to_string());
         }
 
         let source = SystemClipboard;
@@ -628,10 +842,14 @@ pub async fn copy_transfer(
             .lock()
             .map(|settings| settings.paste_plain_text)
             .unwrap_or(false);
+        let mut suppress_hash = None;
+        let mut allow_mismatch = false;
         if items.len() == 1 {
             let item = &items[0];
+            suppress_hash = clipboard_hash(item, &shared.media_dir);
+            allow_mismatch = item.kind == ClipKind::Image;
             if !source.write_with_options(item, &shared.media_dir, plain_text) {
-                return Err("写入剪贴板失败".to_string());
+                return Err("clipboard.write_failed".to_string());
             }
         } else if items.iter().all(|item| item.kind == ClipKind::Image) {
             let paths: Vec<PathBuf> = items
@@ -639,12 +857,14 @@ pub async fn copy_transfer(
                 .map(|item| shared.media_dir.join(&item.content))
                 .collect();
             let png = media::merge_images_vertical(&paths)?;
+            // The merged PNG is re-encoded by the OS, so only the time window can match it.
+            allow_mismatch = true;
             if !source.write_image_png(&png) {
-                return Err("写入合并图片失败".to_string());
+                return Err("clipboard.write_failed".to_string());
             }
         } else {
             if items.iter().any(|item| item.kind == ClipKind::Image) {
-                return Err("图片暂不能与文本或文件合并复制".to_string());
+                return Err("clipboard.merge_mixed".to_string());
             }
             let text = items
                 .iter()
@@ -658,16 +878,23 @@ pub async fn copy_transfer(
                     files.extend(paths);
                 }
             }
+            // `write_merged` drops missing paths before writing, so hash the same list.
+            files.retain(|path| std::path::Path::new(path).exists());
+            suppress_hash = if files.is_empty() {
+                (!text.is_empty()).then(|| hash_bytes(text.as_bytes()))
+            } else {
+                Some(hash_files(&files))
+            };
             let text_arg = if text.is_empty() {
                 None
             } else {
                 Some(text.as_str())
             };
             if !source.write_merged(text_arg, &files) {
-                return Err("写入剪贴板失败".to_string());
+                return Err("clipboard.write_failed".to_string());
             }
         }
-        arm_suppression(&shared)?;
+        arm_suppression(&shared, suppress_hash, allow_mismatch)?;
         {
             let store = shared.store.lock().map_err(|e| e.to_string())?;
             for item in &items {
@@ -696,7 +923,7 @@ pub fn favorite_transfer(
     let store = app_state.store.lock().map_err(|e| e.to_string())?;
     let items: Vec<ClipItem> = ids.iter().filter_map(|id| store.get(id).ok()).collect();
     if items.is_empty() {
-        return Err("没有可收藏的内容".to_string());
+        return Err("clipboard.favorite_empty".to_string());
     }
     let all_favorite = items.iter().all(|item| item.favorite);
     for item in &items {
@@ -757,7 +984,7 @@ pub fn image_file_path(state: State<'_, AppState>, id: String) -> Result<String,
         .get(&id)
         .map_err(|e| e.to_string())?;
     if item.kind != ClipKind::Image {
-        return Err("不是图片条目".to_string());
+        return Err("clipboard.not_image".to_string());
     }
     Ok(app_state
         .media_dir
@@ -798,6 +1025,7 @@ mod tests {
             media_dir: dir.clone(),
             transfer_ids: Mutex::new(Vec::new()),
             target_hwnd: Mutex::new(None),
+            screenshot: Mutex::new(None),
         };
 
         assert!(cleanup_media(&app_state.shared()).is_err());

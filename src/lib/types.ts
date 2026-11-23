@@ -14,7 +14,30 @@ export interface ClipItem {
   copy_count: number;
   created_at: number;
   updated_at: number;
-  thumb_data_url?: string;
+  thumb_path?: string | null;
+}
+
+/**
+ * The list row shape. Long text and HTML stay on the backend until the preview needs them.
+ */
+export interface ClipSummary {
+  id: string;
+  kind: ClipKind;
+  preview: string;
+  text: string;
+  truncated: boolean;
+  files: string[];
+  width: number | null;
+  height: number | null;
+  file_count: number | null;
+  size: number;
+  source_app: string | null;
+  favorite: boolean;
+  pinned: boolean;
+  copy_count: number;
+  created_at: number;
+  updated_at: number;
+  thumb_path?: string | null;
 }
 
 export interface ItemExtra {
@@ -47,6 +70,7 @@ export type LanguageSetting = 'system' | 'zh-CN' | 'en-US';
 
 export interface Settings {
   hotkey: string;
+  screenshotHotkey: string;
   autoStart: boolean;
   hideOnBlur: boolean;
   theme: ThemeSetting;
@@ -63,6 +87,12 @@ export interface Settings {
   monitorPaused: boolean;
   maxTextBytes: number;
   maxImageBytes: number;
+}
+
+export interface ScreenshotSession {
+  imagePath: string;
+  width: number;
+  height: number;
 }
 
 export interface UpdateInfo {

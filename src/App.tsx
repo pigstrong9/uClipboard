@@ -9,6 +9,8 @@ import { SideRail } from './components/SideRail';
 import { Tabs } from './components/Tabs';
 import { Titlebar } from './components/Titlebar';
 import { Toast } from './components/Toast';
+import { errorText } from './lib/errors';
+import { plural } from './lib/format';
 import * as ipc from './lib/ipc';
 import { useI18n } from './lib/useI18n';
 import { useTheme } from './lib/useTheme';
@@ -57,6 +59,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ClipItem | null>(null);
+  const [monitorError, setMonitorError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
@@ -91,12 +94,16 @@ export default function App() {
         setPreviewItem(null);
         clearSelection();
         setQuery('');
+        inputRef.current?.focus();
       }),
     );
     bind(ipc.onOpenSettings(() => setSettingsOpen(true)));
     bind(ipc.onToastMessage((message) => toast(message)));
     bind(ipc.onToastKey((key) => toast(t(key))));
     bind(ipc.onUpdateAvailable((version) => toast(t('updateAvailable', { version }))));
+    bind(ipc.onMonitorError((message) => setMonitorError(message)));
+    bind(ipc.onMonitorOk(() => setMonitorError(null)));
+    bind(ipc.onScreenshotError((code) => toast(errorText(t, code))));
 
     return () => {
       disposed = true;
@@ -106,15 +113,15 @@ export default function App() {
 
   useEffect(() => {
     if (!error) return;
-    toast(error);
+    toast(errorText(t, error));
     clearError();
-  }, [error, toast, clearError]);
+  }, [error, toast, t, clearError]);
 
   useEffect(() => {
     if (!settingsError) return;
-    toast(settingsError);
+    toast(errorText(t, settingsError));
     clearSettingsError();
-  }, [settingsError, toast, clearSettingsError]);
+  }, [settingsError, toast, t, clearSettingsError]);
 
   const askClear = useCallback(() => {
     ask({
@@ -122,7 +129,7 @@ export default function App() {
       onConfirm: () => {
         void clear()
           .then(() => toast(t('historyCleared')))
-          .catch((cause) => toast(String(cause)));
+          .catch((cause) => toast(errorText(t, cause)));
       },
     });
   }, [ask, clear, t, toast]);
@@ -149,14 +156,17 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [search, query, setQuery]);
 
-  const run = async (action: () => Promise<unknown>, message?: string) => {
-    try {
-      await action();
-      if (message) toast(message);
-    } catch (cause) {
-      toast(String(cause));
-    }
-  };
+  const run = useCallback(
+    async (action: () => Promise<unknown>, message?: string) => {
+      try {
+        await action();
+        if (message) toast(message);
+      } catch (cause) {
+        toast(errorText(t, cause));
+      }
+    },
+    [toast, t],
+  );
 
   const copyCurrent = () => {
     if (selected) void run(() => copy(selected.id), t('copied'));
@@ -183,10 +193,43 @@ export default function App() {
       .catch(() => undefined);
   };
 
-  const handleSelect = (id: string) => {
-    select(id);
-    toggleSelection(id);
-  };
+  const handleSelect = useCallback(
+    (id: string) => {
+      select(id);
+      toggleSelection(id);
+    },
+    [select, toggleSelection],
+  );
+  const handleCopy = useCallback(
+    (id: string) => {
+      void run(() => copy(id), t('copied'));
+    },
+    [run, copy, t],
+  );
+  const handlePaste = useCallback(
+    (id: string) => {
+      void run(() => paste(id));
+    },
+    [run, paste],
+  );
+  const handleFavorite = useCallback(
+    (id: string) => {
+      void run(() => toggleFavorite(id));
+    },
+    [run, toggleFavorite],
+  );
+  const handlePin = useCallback(
+    (id: string) => {
+      void run(() => togglePin(id));
+    },
+    [run, togglePin],
+  );
+  const handleDelete = useCallback(
+    (id: string) => {
+      void run(() => remove(id), t('deleted'));
+    },
+    [run, remove, t],
+  );
 
   const openTransferWindow = () => {
     const ids = selectedIds.length
@@ -257,15 +300,13 @@ export default function App() {
         return;
       }
 
-      const index = Math.max(
-        0,
-        items.findIndex((item) => item.id === selectedId),
-      );
+      const found = items.findIndex((item) => item.id === selectedId);
+      const index = Math.max(0, found);
       const current = items[index] ?? null;
 
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        const next = items[Math.min(index + 1, items.length - 1)];
+        const next = items[found < 0 ? 0 : Math.min(index + 1, items.length - 1)];
         if (next) select(next.id);
         return;
       }
@@ -285,16 +326,19 @@ export default function App() {
       }
       if (event.key === 'Enter') {
         event.preventDefault();
+        if (event.repeat) return;
         if (current) void run(() => paste(current.id));
         return;
       }
       if (meta && event.key.toLowerCase() === 'c') {
         event.preventDefault();
+        if (event.repeat) return;
         if (current) void run(() => copy(current.id), t('copied'));
         return;
       }
       if (meta && event.key.toLowerCase() === 'd') {
         event.preventDefault();
+        if (event.repeat) return;
         if (current) {
           void run(
             () => toggleFavorite(current.id),
@@ -305,6 +349,7 @@ export default function App() {
       }
       if (meta && event.key.toLowerCase() === 'p') {
         event.preventDefault();
+        if (event.repeat) return;
         if (current) {
           void run(
             () => togglePin(current.id),
@@ -315,15 +360,22 @@ export default function App() {
       }
       if (event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) {
         event.preventDefault();
+        if (event.repeat) return;
         if (current) void run(() => remove(current.id), t('deleted'));
         return;
       }
       if (event.key === ' ') {
         event.preventDefault();
-        if (current) setPreviewItem(current);
+        if (event.repeat) return;
+        if (current) {
+          void run(async () => {
+            setPreviewItem(await ipc.getItem(current.id));
+          });
+        }
         return;
       }
       if (/^[1-9]$/.test(event.key)) {
+        if (event.repeat) return;
         const targetItem = items[Number(event.key) - 1];
         if (targetItem) {
           event.preventDefault();
@@ -362,6 +414,7 @@ export default function App() {
     select,
     setQuery,
     setTab,
+    run,
     toast,
     t,
   ]);
@@ -384,11 +437,11 @@ export default function App() {
           selectedIds={selectedIds}
           loading={loading}
           onSelect={handleSelect}
-          onCopy={(id) => void run(() => copy(id), t('copied'))}
-          onPaste={(id) => void run(() => paste(id))}
-          onFavorite={(id) => void run(() => toggleFavorite(id))}
-          onPin={(id) => void run(() => togglePin(id))}
-          onDelete={(id) => void run(() => remove(id), t('deleted'))}
+          onCopy={handleCopy}
+          onPaste={handlePaste}
+          onFavorite={handleFavorite}
+          onPin={handlePin}
+          onDelete={handleDelete}
         />
         <SideRail
           hasSelection={Boolean(selected)}
@@ -399,8 +452,14 @@ export default function App() {
           onSettings={() => setSettingsOpen(true)}
           onClear={askClear}
         />
-        <div className={`status-float ${paused ? 'paused' : ''}`}>
-          {paused ? t('paused') : t('monitoring')} · {t('totalCount', { n: totalCount })}
+        <div
+          className={`status-float ${monitorError ? 'error' : paused ? 'paused' : ''}`}
+          title={monitorError ? errorText(t, monitorError) : undefined}
+          role="status"
+          aria-live="polite"
+        >
+          {monitorError ? t('monitorError') : paused ? t('paused') : t('monitoring')} ·{' '}
+          {plural(t, 'totalCount', totalCount)}
         </div>
       </div>
       {settingsOpen && <SettingsView onClose={() => setSettingsOpen(false)} />}

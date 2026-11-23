@@ -42,7 +42,32 @@ pub struct ClipItem {
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thumb_data_url: Option<String>,
+    pub thumb_path: Option<String>,
+}
+
+/// The lightweight shape the history list renders. It deliberately omits the full
+/// `content`/`extra` payloads so a long history cannot ship megabytes of text or HTML
+/// to the webview on every refresh.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClipSummary {
+    pub id: String,
+    pub kind: ClipKind,
+    pub preview: String,
+    pub text: String,
+    pub truncated: bool,
+    pub files: Vec<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub file_count: Option<i64>,
+    pub size: i64,
+    pub source_app: Option<String>,
+    pub favorite: bool,
+    pub pinned: bool,
+    pub copy_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumb_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { baseName, relativeTime } from '../lib/format';
+import { baseName, plural, relativeTime } from '../lib/format';
 import { Icon } from '../lib/icons';
+import * as ipc from '../lib/ipc';
 import { useI18n } from '../lib/useI18n';
-import { parseExtra, parseFiles, type ClipItem } from '../lib/types';
+import type { ClipSummary } from '../lib/types';
 
 interface Props {
-  items: ClipItem[];
+  items: ClipSummary[];
   selectedId: string | null;
   selectedIds: string[];
   loading: boolean;
@@ -17,6 +19,175 @@ interface Props {
   onPin: (id: string) => void;
   onDelete: (id: string) => void;
 }
+
+interface RowProps {
+  item: ClipSummary;
+  index: number;
+  selected: boolean;
+  picked: boolean;
+  expanded: boolean;
+  fullText?: string;
+  onSelect: (id: string) => void;
+  onCopy: (id: string) => void;
+  onPaste: (id: string) => void;
+  onFavorite: (id: string) => void;
+  onPin: (id: string) => void;
+  onDelete: (id: string) => void;
+  onToggleExpand: (item: ClipSummary) => void;
+  onMenu: (item: ClipSummary, x: number, y: number) => void;
+}
+
+const Row = memo(function Row({
+  item,
+  index,
+  selected,
+  picked,
+  expanded,
+  fullText,
+  onSelect,
+  onCopy,
+  onPaste,
+  onFavorite,
+  onPin,
+  onDelete,
+  onToggleExpand,
+  onMenu,
+}: RowProps) {
+  const { t } = useI18n();
+  const meta =
+    item.kind === 'text'
+      ? plural(t, 'chars', item.size)
+      : item.kind === 'image'
+        ? `${item.width ?? 0} × ${item.height ?? 0}`
+        : plural(t, 'filesCount', item.file_count ?? item.files.length);
+  const text = expanded && fullText !== undefined ? fullText : item.text;
+  const thumb = item.thumb_path ? convertFileSrc(item.thumb_path) : null;
+
+  return (
+    <article
+      id={`clip-${item.id}`}
+      role="option"
+      aria-selected={picked}
+      className={`item ${selected ? 'selected' : ''} ${picked ? 'picked' : ''}`}
+      data-id={item.id}
+      onClick={() => onSelect(item.id)}
+      onDoubleClick={() => onPaste(item.id)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onMenu(item, event.clientX, event.clientY);
+      }}
+    >
+      <div className="item-main">
+        {item.kind === 'text' && (
+          <>
+            <div className={`text-preview ${expanded ? 'expanded' : ''}`}>{text}</div>
+            {item.size > 180 && (
+              <button
+                type="button"
+                className="expand-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleExpand(item);
+                }}
+              >
+                {expanded ? t('collapse') : t('expand')}
+              </button>
+            )}
+          </>
+        )}
+        {item.kind === 'image' && (
+          <div className="image-preview">
+            {thumb ? (
+              <img
+                src={thumb}
+                alt={t('previewImageAlt')}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <div className="thumb-placeholder">{t('image')}</div>
+            )}
+          </div>
+        )}
+        {item.kind === 'files' &&
+          (item.files.length > 0 ? (
+            <ul className="file-list">
+              {item.files.slice(0, 4).map((file, fileIndex) => (
+                <li key={`${file}-${fileIndex}`}>
+                  <span className="file-icon">
+                    <Icon name="file" />
+                  </span>
+                  <span className="file-name">{baseName(file)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-preview">
+              {plural(t, 'filesCount', item.file_count ?? 0)}
+            </div>
+          ))}
+      </div>
+      <div className="item-meta">
+        <span className="item-time">{relativeTime(item.updated_at, t)}</span>
+        {item.source_app && (
+          <span className="item-source" title={t('sourceApp')}>
+            {item.source_app}
+          </span>
+        )}
+        <span className="item-size">{meta}</span>
+        {item.copy_count > 1 && (
+          <span className="item-copy-count" title={t('copyCount')}>
+            {item.copy_count}×
+          </span>
+        )}
+        {index < 9 && <span className="item-index">{index + 1}</span>}
+      </div>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('copy')}
+          aria-label={t('copy')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCopy(item.id);
+          }}
+        >
+          <Icon name="copy" />
+        </button>
+        <button
+          type="button"
+          className={`icon-btn ${item.favorite ? 'active' : ''}`}
+          title={t('favorite')}
+          aria-label={item.favorite ? t('unfavorite') : t('favorite')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFavorite(item.id);
+          }}
+        >
+          <Icon name="star" />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('delete')}
+          aria-label={t('delete')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(item.id);
+          }}
+        >
+          <Icon name="trash" />
+        </button>
+      </div>
+      {item.pinned && (
+        <span className="pin-badge">
+          <Icon name="pin" />
+        </span>
+      )}
+    </article>
+  );
+});
 
 export function ClipboardList({
   items,
@@ -30,9 +201,55 @@ export function ClipboardList({
   onPin,
   onDelete,
 }: Props) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<{ x: number; y: number; item: ClipItem } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [contents, setContents] = useState<Record<string, string>>({});
+  const [menu, setMenu] = useState<{ x: number; y: number; item: ClipSummary } | null>(null);
+  const listRef = useRef<HTMLElement>(null);
+  const expandedRef = useRef(expanded);
+  const contentsRef = useRef(contents);
   const { t } = useI18n();
+
+  const toggleExpanded = useCallback((item: ClipSummary) => {
+    const next = new Set(expandedRef.current);
+    if (next.has(item.id)) next.delete(item.id);
+    else next.add(item.id);
+    expandedRef.current = next;
+    setExpanded(next);
+
+    if (
+      next.has(item.id) &&
+      item.truncated &&
+      contentsRef.current[item.id] === undefined
+    ) {
+      ipc
+        .getItem(item.id)
+        .then((full) => {
+          contentsRef.current = { ...contentsRef.current, [item.id]: full.content };
+          setContents(contentsRef.current);
+        })
+        .catch(() => undefined);
+    }
+  }, []);
+
+  const openMenu = useCallback((item: ClipSummary, x: number, y: number) => {
+    setMenu({
+      x: Math.min(x, window.innerWidth - 170),
+      y: Math.min(y, window.innerHeight - 210),
+      item,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const nodes = listRef.current?.querySelectorAll<HTMLElement>('[data-id]');
+    if (!nodes) return;
+    for (const node of nodes) {
+      if (node.dataset.id === selectedId) {
+        node.scrollIntoView({ block: 'nearest' });
+        break;
+      }
+    }
+  }, [selectedId]);
 
   useEffect(() => {
     if (!menu) return;
@@ -74,143 +291,37 @@ export function ClipboardList({
     );
   }
 
-  const toggleExpanded = (id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const picked = new Set(selectedIds);
 
   return (
-    <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
-      {items.map((item, index) => {
-        const extra = parseExtra(item.extra);
-        const files = item.kind === 'files' ? parseFiles(item.content) : [];
-        const meta =
-          item.kind === 'text'
-            ? t('chars', { n: item.size })
-            : item.kind === 'image'
-              ? `${extra.width ?? 0} × ${extra.height ?? 0}`
-              : t('filesCount', { n: extra.count ?? files.length });
-        const isExpanded = expanded.has(item.id);
-
-        return (
-          <article
-            key={item.id}
-            className={`item ${selectedId === item.id ? 'selected' : ''} ${
-              picked.has(item.id) ? 'picked' : ''
-            }`}
-            data-id={item.id}
-            onClick={() => onSelect(item.id)}
-            onDoubleClick={() => onPaste(item.id)}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setMenu({
-                x: Math.min(event.clientX, window.innerWidth - 170),
-                y: Math.min(event.clientY, window.innerHeight - 210),
-                item,
-              });
-            }}
-          >
-            <div className="item-main">
-              {item.kind === 'text' && (
-                <>
-                  <div className={`text-preview ${isExpanded ? 'expanded' : ''}`}>
-                    {item.content}
-                  </div>
-                  {item.size > 180 && (
-                    <button
-                      type="button"
-                      className="expand-btn"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleExpanded(item.id);
-                      }}
-                    >
-                      {isExpanded ? t('collapse') : t('expand')}
-                    </button>
-                  )}
-                </>
-              )}
-              {item.kind === 'image' && (
-                <div className="image-preview">
-                  {item.thumb_data_url ? (
-                    <img src={item.thumb_data_url} alt={t('previewImageAlt')} />
-                  ) : (
-                    <div className="thumb-placeholder">{t('image')}</div>
-                  )}
-                </div>
-              )}
-              {item.kind === 'files' && (
-                <ul className="file-list">
-                  {(files.length ? files : [item.preview]).slice(0, 4).map((file, fileIndex) => (
-                    <li key={`${file}-${fileIndex}`}>
-                      <span className="file-icon">
-                        <Icon name="file" />
-                      </span>
-                      <span className="file-name">{baseName(file)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="item-meta">
-              <span className="item-time">{relativeTime(item.updated_at, t)}</span>
-              {item.source_app && (
-                <span className="item-source" title={t('sourceApp')}>
-                  {item.source_app}
-                </span>
-              )}
-              <span className="item-size">{meta}</span>
-              {index < 9 && <span className="item-index">{index + 1}</span>}
-            </div>
-            <div className="row-actions">
-              <button
-                type="button"
-                className="icon-btn"
-                title={t('copy')}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onCopy(item.id);
-                }}
-              >
-                <Icon name="copy" />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title={t('favorite')}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onFavorite(item.id);
-                }}
-              >
-                <Icon name="star" />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title={t('delete')}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete(item.id);
-                }}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-            {item.pinned && (
-              <span className="pin-badge">
-                <Icon name="pin" />
-              </span>
-            )}
-          </article>
-        );
-      })}
+    <section
+      className="list"
+      tabIndex={0}
+      role="listbox"
+      aria-multiselectable="true"
+      aria-label={t('historyLabel')}
+      aria-activedescendant={selectedId ? `clip-${selectedId}` : undefined}
+      ref={listRef}
+    >
+      {items.map((item, index) => (
+        <Row
+          key={item.id}
+          item={item}
+          index={index}
+          selected={selectedId === item.id}
+          picked={picked.has(item.id)}
+          expanded={expanded.has(item.id)}
+          fullText={contents[item.id]}
+          onSelect={onSelect}
+          onCopy={onCopy}
+          onPaste={onPaste}
+          onFavorite={onFavorite}
+          onPin={onPin}
+          onDelete={onDelete}
+          onToggleExpand={toggleExpanded}
+          onMenu={openMenu}
+        />
+      ))}
       {menu && (
         <div
           className="context-menu"

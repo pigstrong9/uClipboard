@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
-use crate::models::{ClipItem, ClipKind, NewItem};
+use crate::media;
+use crate::models::{ClipItem, ClipKind, ClipSummary, NewItem};
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS items (
@@ -27,6 +28,10 @@ CREATE INDEX IF NOT EXISTS idx_items_order ON items(pinned DESC, updated_at DESC
 CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind, favorite, updated_at DESC);
 "#;
 
+/// Ordered schema history. Version 1 is the original schema; append future upgrades
+/// instead of editing an entry that has already shipped.
+const MIGRATIONS: &[&str] = &[SCHEMA];
+
 pub struct Store {
     conn: Connection,
 }
@@ -47,8 +52,26 @@ impl Store {
 
     fn from_conn(conn: Connection) -> rusqlite::Result<Self> {
         let store = Self { conn };
-        store.conn.execute_batch(SCHEMA)?;
+        store.migrate()?;
         Ok(store)
+    }
+
+    fn migrate(&self) -> rusqlite::Result<()> {
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let latest = MIGRATIONS.len() as i64;
+        if version >= latest {
+            return Ok(());
+        }
+        // One transaction per startup keeps a partially applied upgrade from leaving the
+        // file at a version the code no longer understands.
+        let tx = self.conn.unchecked_transaction()?;
+        for (index, sql) in MIGRATIONS.iter().enumerate().skip(version.max(0) as usize) {
+            tx.execute_batch(sql)?;
+            tx.pragma_update(None, "user_version", (index + 1) as i64)?;
+        }
+        tx.commit()
     }
 
     pub fn insert(&self, item: NewItem) -> rusqlite::Result<ClipItem> {
@@ -95,6 +118,7 @@ impl Store {
         )
     }
 
+    #[cfg(test)]
     pub fn list(&self, tab: &str, query: &str, limit: i64) -> rusqlite::Result<Vec<ClipItem>> {
         let pattern = like_pattern(query);
         let mut stmt = self.conn.prepare(
@@ -107,6 +131,89 @@ impl Store {
              LIMIT ?4",
         )?;
         let rows = stmt.query_map(params![tab, query, pattern, limit], row_to_item)?;
+        rows.collect()
+    }
+
+    /// Lightweight rows for the history list: long text and HTML are never selected, so
+    /// a 5 MB clip cannot be shipped to the webview on every refresh.
+    pub fn list_summaries(
+        &self,
+        tab: &str,
+        query: &str,
+        limit: i64,
+        media_dir: &Path,
+    ) -> rusqlite::Result<Vec<ClipSummary>> {
+        let pattern = like_pattern(query);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, preview, size, source_app, favorite, pinned, copy_count,
+                    created_at, updated_at,
+                    CASE WHEN kind = 'text' THEN substr(content, 1, 400) ELSE '' END AS text,
+                    CASE WHEN kind = 'text' AND length(content) > 400 THEN 1 ELSE 0 END AS truncated,
+                    CASE WHEN kind = 'files' AND length(content) <= 4096 THEN content END AS files_json,
+                    CASE WHEN kind = 'image' THEN content END AS image_path,
+                    json_extract(extra, '$.width') AS width,
+                    json_extract(extra, '$.height') AS height,
+                    json_extract(extra, '$.count') AS file_count
+             FROM items
+             WHERE (?1 IN ('all', 'favorite') OR kind = ?1)
+               AND (?1 != 'favorite' OR favorite = 1)
+               AND (?2 = '' OR content LIKE ?3 ESCAPE '\\' OR preview LIKE ?3 ESCAPE '\\')
+               AND (
+                 favorite = 1
+                 OR pinned = 1
+                 OR id IN (
+                   SELECT id FROM items
+                   WHERE favorite = 0 AND pinned = 0
+                     AND (?1 IN ('all', 'favorite') OR kind = ?1)
+                     AND (?2 = '' OR content LIKE ?3 ESCAPE '\\' OR preview LIKE ?3 ESCAPE '\\')
+                   ORDER BY updated_at DESC
+                   LIMIT ?4
+                 )
+               )
+             ORDER BY (CASE WHEN ?1 = 'favorite' THEN 0 ELSE pinned END) DESC, updated_at DESC
+             LIMIT -1",
+        )?;
+        let rows = stmt.query_map(params![tab, query, pattern, limit], |row| {
+            let kind_value: String = row.get("kind")?;
+            let kind = ClipKind::parse(&kind_value).ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(
+                    1,
+                    "kind".to_string(),
+                    rusqlite::types::Type::Text,
+                )
+            })?;
+            let files_json: Option<String> = row.get("files_json")?;
+            let files = files_json
+                .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+                .unwrap_or_default();
+            let image_path: Option<String> = row.get("image_path")?;
+            let thumb_path = image_path
+                .as_deref()
+                .and_then(|path| media::thumb_path(media_dir, path));
+            Ok(ClipSummary {
+                id: row.get("id")?,
+                kind,
+                preview: row.get("preview")?,
+                text: row.get("text")?,
+                truncated: row.get::<_, i64>("truncated")? != 0,
+                files,
+                width: row
+                    .get::<_, Option<i64>>("width")?
+                    .and_then(|value| u32::try_from(value).ok()),
+                height: row
+                    .get::<_, Option<i64>>("height")?
+                    .and_then(|value| u32::try_from(value).ok()),
+                file_count: row.get("file_count")?,
+                size: row.get("size")?,
+                source_app: row.get("source_app")?,
+                favorite: row.get::<_, i64>("favorite")? != 0,
+                pinned: row.get::<_, i64>("pinned")? != 0,
+                copy_count: row.get("copy_count")?,
+                created_at: row.get("created_at")?,
+                updated_at: row.get("updated_at")?,
+                thumb_path,
+            })
+        })?;
         rows.collect()
     }
 
@@ -230,7 +337,7 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         copy_count: row.get("copy_count")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
-        thumb_data_url: None,
+        thumb_path: None,
     })
 }
 
@@ -290,6 +397,71 @@ mod tests {
     }
 
     #[test]
+    fn migrates_schema_and_keeps_data_on_reopen() {
+        let dir = std::env::temp_dir().join(format!("uclipboard-store-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        {
+            let store = Store::open(&path).unwrap();
+            let version: i64 = store
+                .conn
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, MIGRATIONS.len() as i64);
+            store.insert(new_text("kept", "h1")).unwrap();
+        }
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.count().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn summaries_avoid_full_payloads_and_resolve_thumbnails() {
+        let dir = std::env::temp_dir().join(format!("uclipboard-summary-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(dir.join("images")).unwrap();
+        std::fs::write(dir.join("images/pic_thumb.jpg"), b"thumb").unwrap();
+
+        let store = Store::in_memory().unwrap();
+        let long = "x".repeat(1_000);
+        store.insert(new_text(&long, "h1")).unwrap();
+        store
+            .insert(new_kind(ClipKind::Image, "images/pic.png", "h2"))
+            .unwrap();
+        store
+            .insert(new_kind(
+                ClipKind::Files,
+                "[\"C:/tmp/a.txt\",\"C:/tmp/b.txt\"]",
+                "h3",
+            ))
+            .unwrap();
+
+        let summaries = store.list_summaries("all", "", 500, &dir).unwrap();
+        let text = summaries
+            .iter()
+            .find(|row| row.kind == ClipKind::Text)
+            .unwrap();
+        assert!(text.truncated);
+        assert_eq!(text.text.chars().count(), 400);
+
+        let image = summaries
+            .iter()
+            .find(|row| row.kind == ClipKind::Image)
+            .unwrap();
+        assert!(image
+            .thumb_path
+            .as_deref()
+            .unwrap_or_default()
+            .ends_with("pic_thumb.jpg"));
+
+        let files = summaries
+            .iter()
+            .find(|row| row.kind == ClipKind::Files)
+            .unwrap();
+        assert_eq!(files.files, vec!["C:/tmp/a.txt", "C:/tmp/b.txt"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn same_hash_moves_to_top_without_duplicate() {
         let store = Store::in_memory().unwrap();
         let first = store.insert(new_text("alpha", "h1")).unwrap();
@@ -321,6 +493,43 @@ mod tests {
         assert_eq!(favorites[0].id, b.id);
         assert_eq!(store.list("text", "", 500).unwrap()[0].id, a.id);
         assert_eq!(c.kind, ClipKind::Text);
+    }
+
+    #[test]
+    fn favorite_list_is_not_capped_by_history_limit() {
+        let store = Store::in_memory().unwrap();
+        for index in 0..5 {
+            let item = store
+                .insert(new_text(&format!("item {index}"), &format!("h{index}")))
+                .unwrap();
+            store.toggle_favorite(&item.id).unwrap();
+        }
+
+        assert_eq!(store.list("all", "", 2).unwrap().len(), 2);
+        assert_eq!(store.list("favorite", "", -1).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn summaries_keep_pinned_past_the_limit() {
+        let store = Store::in_memory().unwrap();
+        let mut items = Vec::new();
+        for index in 0..5 {
+            items.push(
+                store
+                    .insert(new_text(&format!("item {index}"), &format!("h{index}")))
+                    .unwrap(),
+            );
+        }
+        // Pin the newest entries so a limit applied before the exemption would hide the
+        // older, non-pinned rows entirely.
+        for item in items.iter().rev().take(3) {
+            store.toggle_pin(&item.id).unwrap();
+        }
+
+        let rows = store.list_summaries("all", "", 2, Path::new(".")).unwrap();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.iter().filter(|row| row.pinned).count(), 3);
+        assert_eq!(rows.iter().filter(|row| !row.pinned).count(), 2);
     }
 
     #[test]

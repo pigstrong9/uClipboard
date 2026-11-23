@@ -1,3 +1,4 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -18,6 +19,10 @@ use super::source::{ClipboardSource, RawCapture, SystemClipboard};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+/// A single capture should never be able to fill the database or the IPC payload.
+const MAX_FILES: usize = 200;
+const MAX_FILES_JSON_BYTES: usize = 2 * 1024 * 1024;
+const MAX_HTML_BYTES: usize = 512 * 1024;
 
 pub struct PreparedItem {
     pub item: NewItem,
@@ -26,11 +31,26 @@ pub struct PreparedItem {
 pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Option<PreparedItem> {
     match capture.kind {
         ClipKind::Files => {
-            let mut files = capture.files;
+            let mut files: Vec<String> = capture
+                .files
+                .into_iter()
+                .filter(|path| !path.is_empty())
+                .collect();
+            files.sort();
+            files.dedup();
             if files.is_empty() {
                 return None;
             }
-            files.sort();
+            files.truncate(MAX_FILES);
+            let mut content = serde_json::to_string(&files).ok()?;
+            // Paths can be arbitrarily long, so shrink the batch until the JSON fits.
+            while content.len() > MAX_FILES_JSON_BYTES && files.len() > 1 {
+                files.truncate(files.len() / 2);
+                content = serde_json::to_string(&files).ok()?;
+            }
+            if content.len() > MAX_FILES_JSON_BYTES {
+                return None;
+            }
             let first = files.first()?.as_str();
             let first_name = Path::new(first)
                 .file_name()
@@ -38,7 +58,6 @@ pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Op
                 .unwrap_or("文件")
                 .to_string();
             let preview = format!("{first_name} 等 {} 个文件", files.len());
-            let content = serde_json::to_string(&files).ok()?;
             Some(PreparedItem {
                 item: NewItem {
                     kind: ClipKind::Files,
@@ -86,9 +105,11 @@ pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Op
                 .chars()
                 .take(120)
                 .collect::<String>();
+            // HTML is only a convenience for rich paste; an oversized document is dropped
+            // rather than stored next to every text clip.
             let extra = capture
                 .html
-                .filter(|html| !html.is_empty())
+                .filter(|html| !html.is_empty() && html.len() <= MAX_HTML_BYTES)
                 .map(|html| json!({ "html": html }).to_string());
             Some(PreparedItem {
                 item: NewItem {
@@ -102,6 +123,12 @@ pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Op
                 },
             })
         }
+    }
+}
+
+fn advance_sequence(last: &mut Option<u32>, sequence: Option<u32>) {
+    if let Some(sequence) = sequence {
+        *last = Some(sequence);
     }
 }
 
@@ -131,7 +158,7 @@ fn prune_and_cleanup(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Set
         match store.image_paths() {
             Ok(live) => live,
             Err(error) => {
-                eprintln!("media cleanup skipped: {error}");
+                log::warn!("media cleanup skipped: {error}");
                 return;
             }
         }
@@ -148,6 +175,185 @@ fn prune_after_insert(store: &Arc<Mutex<Store>>, media_dir: &Path, settings: &Se
     }
 }
 
+fn report_error(app: &AppHandle, last: &mut Option<String>, message: String) {
+    if last.as_deref() == Some(message.as_str()) {
+        return;
+    }
+    log::error!("clipboard monitor: {message}");
+    let _ = app.emit("monitor-error", message.clone());
+    *last = Some(message);
+}
+
+fn clear_error(app: &AppHandle, last: &mut Option<String>) {
+    if last.take().is_some() {
+        let _ = app.emit("monitor-ok", ());
+    }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
+fn monitor_loop(
+    app: AppHandle,
+    store: Arc<Mutex<Store>>,
+    settings: Arc<Mutex<Settings>>,
+    suppress: Arc<Mutex<Suppression>>,
+    media_dir: PathBuf,
+) {
+    let source = SystemClipboard;
+    let mut last_hash: Option<String> = None;
+    let mut last_sequence: Option<u32> = None;
+    let mut last_prune = Instant::now();
+    let mut was_paused = false;
+    let mut last_error: Option<String> = None;
+
+    loop {
+        thread::sleep(POLL_INTERVAL);
+
+        if last_prune.elapsed() >= PRUNE_INTERVAL {
+            let snapshot = settings
+                .lock()
+                .map(|settings| settings.clone())
+                .unwrap_or_default();
+            prune_and_cleanup(&store, &media_dir, &snapshot);
+            last_prune = Instant::now();
+        }
+
+        let snapshot = match settings.lock() {
+            Ok(settings) => settings.clone(),
+            Err(_) => {
+                report_error(&app, &mut last_error, "monitor.settings_failed".to_string());
+                continue;
+            }
+        };
+        if snapshot.monitor_paused {
+            was_paused = true;
+            // Track the revision while paused so content copied during the pause is
+            // skipped on resume. Recording it as the last sequence (instead of
+            // snapshotting the content on resume) means a copy made just after
+            // resuming is not mistaken for paused content.
+            advance_sequence(&mut last_sequence, platform::clipboard_sequence());
+            continue;
+        }
+        if was_paused {
+            was_paused = false;
+        }
+
+        // Skip read/decode entirely while the clipboard is unchanged; otherwise
+        // an image sitting in the clipboard would be re-encoded every poll.
+        let sequence = platform::clipboard_sequence();
+        if let Some(sequence) = sequence {
+            if last_sequence == Some(sequence) {
+                continue;
+            }
+        }
+
+        // Privacy and the ignore list are checked before reading, so concealed content
+        // is never pulled into memory or decoded as an image first.
+        let owner = platform::clipboard_owner_app_name();
+        if let Some(name) = owner.as_deref() {
+            if snapshot.ignores_app(name) {
+                advance_sequence(&mut last_sequence, sequence);
+                clear_error(&app, &mut last_error);
+                continue;
+            }
+        }
+
+        match source.privacy() {
+            Ok(true) => {
+                advance_sequence(&mut last_sequence, sequence);
+                clear_error(&app, &mut last_error);
+                continue;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                // A failed format probe may be a transient clipboard lock; retry on the
+                // next poll instead of guessing whether the content is private.
+                log::error!("privacy check failed: {error}");
+                report_error(&app, &mut last_error, "monitor.privacy_failed".to_string());
+                continue;
+            }
+        }
+
+        // A failed read must not advance the revision, or the content would stay
+        // invisible until the clipboard changes again.
+        let capture = match source.read() {
+            Ok(Some(capture)) => capture,
+            Ok(None) => {
+                advance_sequence(&mut last_sequence, sequence);
+                clear_error(&app, &mut last_error);
+                continue;
+            }
+            Err(error) => {
+                log::error!("read clipboard failed: {error}");
+                report_error(&app, &mut last_error, "monitor.read_failed".to_string());
+                continue;
+            }
+        };
+        clear_error(&app, &mut last_error);
+
+        let Some(hash) = raw_hash(&capture) else {
+            advance_sequence(&mut last_sequence, sequence);
+            continue;
+        };
+        advance_sequence(&mut last_sequence, sequence);
+
+        {
+            let mut guard = match suppress.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    report_error(&app, &mut last_error, "monitor.lock_failed".to_string());
+                    continue;
+                }
+            };
+            if guard.should_skip(sequence, &hash) {
+                last_hash = Some(hash);
+                continue;
+            }
+        }
+
+        if last_hash.as_deref() == Some(hash.as_str()) {
+            continue;
+        }
+
+        if !snapshot.allows(capture.kind) {
+            last_hash = Some(hash);
+            continue;
+        }
+
+        let Some(mut prepared) = prepare(capture, &media_dir, &snapshot) else {
+            last_hash = Some(hash);
+            continue;
+        };
+        prepared.item.source_app = owner;
+        let hash = prepared.item.hash.clone();
+
+        let result = store.lock().map(|store| store.insert(prepared.item));
+        match result {
+            Ok(Ok(_)) => {
+                last_hash = Some(hash);
+                let _ = app.emit("clipboard-changed", ());
+                prune_after_insert(&store, &media_dir, &snapshot);
+                last_prune = Instant::now();
+            }
+            Ok(Err(error)) => {
+                log::error!("insert clipboard item failed: {error}");
+                report_error(&app, &mut last_error, "monitor.insert_failed".to_string());
+            }
+            Err(_) => {
+                report_error(&app, &mut last_error, "monitor.lock_failed".to_string());
+            }
+        }
+    }
+}
+
 pub fn spawn_monitor(
     app: AppHandle,
     store: Arc<Mutex<Store>>,
@@ -155,118 +361,30 @@ pub fn spawn_monitor(
     suppress: Arc<Mutex<Suppression>>,
     media_dir: PathBuf,
 ) {
-    thread::spawn(move || {
-        let source = SystemClipboard;
-        let mut last_hash: Option<String> = None;
-        let mut last_sequence: Option<u32> = None;
-        let mut last_prune = Instant::now();
-        let mut was_paused = false;
-        let mut resume_sequence: Option<u32> = None;
-        let mut skip_next = false;
-
-        loop {
-            thread::sleep(POLL_INTERVAL);
-
-            if last_prune.elapsed() >= PRUNE_INTERVAL {
-                let snapshot = settings
-                    .lock()
-                    .map(|settings| settings.clone())
-                    .unwrap_or_default();
-                prune_and_cleanup(&store, &media_dir, &snapshot);
-                last_prune = Instant::now();
+    thread::spawn(move || loop {
+        // A panic in a decoder or FFI call must not silently stop capture; the thread
+        // reports it and starts a fresh loop instead.
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            monitor_loop(
+                app.clone(),
+                Arc::clone(&store),
+                Arc::clone(&settings),
+                Arc::clone(&suppress),
+                media_dir.clone(),
+            );
+        }));
+        let code = match outcome {
+            Ok(()) => {
+                log::warn!("clipboard monitor exited unexpectedly");
+                "monitor.stopped".to_string()
             }
-
-            let snapshot = match settings.lock() {
-                Ok(settings) => settings.clone(),
-                Err(_) => continue,
-            };
-            if snapshot.monitor_paused {
-                was_paused = true;
-                continue;
+            Err(payload) => {
+                log::error!("clipboard monitor panicked: {}", panic_message(payload));
+                "monitor.panicked".to_string()
             }
-            if was_paused {
-                was_paused = false;
-                resume_sequence = platform::clipboard_sequence();
-                skip_next = resume_sequence.is_none();
-            }
-
-            // Skip read/decode entirely while the clipboard is unchanged; otherwise
-            // an image sitting in the clipboard would be re-encoded every poll.
-            let sequence = platform::clipboard_sequence();
-            if let Some(sequence) = sequence {
-                if last_sequence == Some(sequence) {
-                    continue;
-                }
-                last_sequence = Some(sequence);
-            }
-
-            let Some(capture) = source.read() else {
-                continue;
-            };
-            let Some(hash) = raw_hash(&capture) else {
-                continue;
-            };
-
-            if let Some(sequence) = resume_sequence {
-                if platform::clipboard_sequence() == Some(sequence) {
-                    resume_sequence = None;
-                    last_hash = Some(hash);
-                    continue;
-                }
-                resume_sequence = None;
-            }
-            if last_hash.as_deref() == Some(hash.as_str()) {
-                continue;
-            }
-            if skip_next {
-                skip_next = false;
-                last_hash = Some(hash);
-                continue;
-            }
-
-            if source.is_private() || !snapshot.allows(capture.kind) {
-                last_hash = Some(hash);
-                continue;
-            }
-
-            let foreground = platform::foreground_app_name();
-            if let Some(app) = foreground.as_deref() {
-                if snapshot.ignores_app(app) {
-                    last_hash = Some(hash);
-                    continue;
-                }
-            }
-
-            let Some(mut prepared) = prepare(capture, &media_dir, &snapshot) else {
-                last_hash = Some(hash);
-                continue;
-            };
-            prepared.item.source_app = foreground;
-            let hash = prepared.item.hash.clone();
-
-            {
-                let mut guard = match suppress.lock() {
-                    Ok(guard) => guard,
-                    Err(_) => continue,
-                };
-                if guard.should_skip() {
-                    last_hash = Some(hash);
-                    continue;
-                }
-            }
-
-            let result = store.lock().map(|store| store.insert(prepared.item));
-            match result {
-                Ok(Ok(_)) => {
-                    last_hash = Some(hash);
-                    let _ = app.emit("clipboard-changed", ());
-                    prune_after_insert(&store, &media_dir, &snapshot);
-                    last_prune = Instant::now();
-                }
-                Ok(Err(error)) => eprintln!("clipboard insert failed: {error}"),
-                Err(_) => eprintln!("clipboard store lock failed"),
-            }
-        }
+        };
+        let _ = app.emit("monitor-error", code);
+        thread::sleep(Duration::from_secs(2));
     });
 }
 
@@ -310,6 +428,38 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("<b>hello</b>"));
+    }
+
+    #[test]
+    fn drops_oversized_html() {
+        let html = "x".repeat(MAX_HTML_BYTES + 1);
+        let prepared = prepare(
+            text_capture("hello clipboard", Some(&html)),
+            Path::new("."),
+            &Settings::default(),
+        )
+        .expect("text should still be prepared");
+        assert!(prepared.item.extra.is_none());
+    }
+
+    #[test]
+    fn caps_the_file_count() {
+        let files = (0..(MAX_FILES + 50))
+            .map(|index| format!("C:/tmp/{index}.txt"))
+            .collect();
+        let prepared = prepare(
+            RawCapture {
+                kind: ClipKind::Files,
+                text: None,
+                html: None,
+                image_png: None,
+                files,
+            },
+            Path::new("."),
+            &Settings::default(),
+        )
+        .expect("files should be prepared");
+        assert_eq!(prepared.item.size, MAX_FILES as i64);
     }
 
     #[test]

@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::{ExtendedColorType, GenericImageView, ImageEncoder, ImageFormat, Rgba, RgbaImage};
 
@@ -12,14 +11,40 @@ pub struct SavedImage {
     pub height: u32,
 }
 
+/// Largest edge allowed when decoding an image from disk or the clipboard.
+const MAX_DECODE_EDGE: u32 = 20_000;
+/// Upper bound on decoded pixels, so a small compressed file cannot expand unbounded.
+const MAX_DECODE_PIXELS: u64 = 100_000_000;
+/// Merged images are capped separately: a single paste should not build a huge canvas.
+const MAX_MERGE_IMAGES: usize = 32;
+const MAX_MERGE_PIXELS: u64 = 80_000_000;
+
+/// Decodes an image while enforcing dimension and allocation limits.
+pub fn decode_image_limited(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_EDGE);
+    limits.max_image_height = Some(MAX_DECODE_EDGE);
+    limits.max_alloc = Some(384 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|error| error.to_string())?;
+    let pixels = u64::from(image.width()) * u64::from(image.height());
+    if pixels > MAX_DECODE_PIXELS {
+        return Err("image.too_large".to_string());
+    }
+    Ok(image)
+}
+
 pub fn save_png(media_dir: &Path, hash: &str, png: &[u8]) -> Result<SavedImage, String> {
+    // Decode before touching the disk so an over-limit image leaves no stray file.
+    let img = decode_image_limited(png)?;
     let images = media_dir.join("images");
     std::fs::create_dir_all(&images).map_err(|e| e.to_string())?;
     let path = images.join(format!("{hash}.png"));
     std::fs::write(&path, png).map_err(|e| e.to_string())?;
 
-    let img =
-        image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| e.to_string())?;
     let (width, height) = img.dimensions();
     let thumb = img.thumbnail(300, 300).to_rgb8();
     let mut buffer = Cursor::new(Vec::new());
@@ -37,11 +62,10 @@ pub fn save_png(media_dir: &Path, hash: &str, png: &[u8]) -> Result<SavedImage, 
     })
 }
 
-pub fn thumb_data_url(media_dir: &Path, rel_path: &str) -> Option<String> {
+pub fn thumb_path(media_dir: &Path, rel_path: &str) -> Option<String> {
     let stem = Path::new(rel_path).file_stem()?.to_string_lossy();
     let path = media_dir.join("images").join(format!("{stem}_thumb.jpg"));
-    let bytes = std::fs::read(path).ok()?;
-    Some(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)))
+    path.is_file().then(|| path.to_string_lossy().into_owned())
 }
 
 pub fn remove_media_files(media_dir: &Path, rel_paths: &[String]) {
@@ -87,14 +111,23 @@ pub fn cleanup_orphans(media_dir: &Path, live_paths: &[String]) {
 }
 
 pub fn merge_images_vertical(paths: &[PathBuf]) -> Result<Vec<u8>, String> {
+    if paths.len() > MAX_MERGE_IMAGES {
+        return Err("image.merge_too_many".to_string());
+    }
     let mut images = Vec::new();
+    let mut decoded_pixels = 0u64;
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let image = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
+        let image = decode_image_limited(&bytes)?;
+        decoded_pixels =
+            decoded_pixels.saturating_add(u64::from(image.width()) * u64::from(image.height()));
+        if decoded_pixels > MAX_MERGE_PIXELS {
+            return Err("image.merge_too_large".to_string());
+        }
         images.push(image.to_rgba8());
     }
     if images.is_empty() {
-        return Err("没有可合并的图片".to_string());
+        return Err("image.merge_empty".to_string());
     }
 
     const GAP: u32 = 8;
@@ -105,7 +138,10 @@ pub fn merge_images_vertical(paths: &[PathBuf]) -> Result<Vec<u8>, String> {
         .sum::<u32>()
         .saturating_add(GAP.saturating_mul(images.len().saturating_sub(1) as u32));
     if width == 0 || height == 0 {
-        return Err("图片尺寸无效".to_string());
+        return Err("image.invalid_size".to_string());
+    }
+    if u64::from(width) * u64::from(height) > MAX_MERGE_PIXELS {
+        return Err("image.merge_too_large".to_string());
     }
 
     let mut canvas = RgbaImage::from_pixel(width, height, Rgba([255, 255, 255, 255]));

@@ -1,8 +1,10 @@
 mod clipboard;
 mod commands;
+mod hotkey_capture;
 mod media;
 mod models;
 mod platform;
+mod screenshot;
 mod settings;
 mod state;
 mod storage;
@@ -12,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 fn center_on_cursor(window: &tauri::WebviewWindow) {
     let Ok(cursor) = window.cursor_position() else {
@@ -76,10 +78,25 @@ fn toggle_main(app: &tauri::AppHandle) {
 
 fn on_shortcut(
     app: &tauri::AppHandle,
-    _shortcut: &tauri_plugin_global_shortcut::Shortcut,
+    shortcut: &Shortcut,
     event: tauri_plugin_global_shortcut::ShortcutEvent,
 ) {
-    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+    if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+        return;
+    }
+    let screenshot_hotkey = app
+        .state::<state::AppState>()
+        .settings
+        .lock()
+        .map(|settings| settings.screenshot_hotkey.clone())
+        .unwrap_or_default();
+    let is_screenshot = screenshot_hotkey
+        .parse::<Shortcut>()
+        .map(|configured| configured.id() == shortcut.id())
+        .unwrap_or(false);
+    if is_screenshot {
+        screenshot::trigger(app.clone());
+    } else {
         toggle_main(app);
     }
 }
@@ -129,6 +146,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             let app_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_dir)?;
@@ -150,7 +168,7 @@ pub fn run() {
                 });
             match live {
                 Ok(live) => media::cleanup_orphans(&media_dir, &live),
-                Err(error) => eprintln!("startup media cleanup skipped: {error}"),
+                Err(error) => log::warn!("startup media cleanup skipped: {error}"),
             }
 
             app.manage(state::AppState {
@@ -161,6 +179,7 @@ pub fn run() {
                 media_dir: media_dir.clone(),
                 transfer_ids: Mutex::new(Vec::new()),
                 target_hwnd: Mutex::new(None),
+                screenshot: Mutex::new(None),
             });
 
             #[cfg(not(debug_assertions))]
@@ -184,6 +203,7 @@ pub fn run() {
                 app.handle().plugin(plugin)?;
             }
 
+            let mut shortcut_notice: Option<&'static str> = None;
             {
                 let manager = app.global_shortcut();
                 if let Err(error) = manager.register(loaded.hotkey.as_str()) {
@@ -194,6 +214,37 @@ pub fn run() {
                         }
                     }
                 }
+                if let Err(error) = manager.register(loaded.screenshot_hotkey.as_str()) {
+                    eprintln!(
+                        "register screenshot shortcut {} failed: {error}",
+                        loaded.screenshot_hotkey
+                    );
+                    let fallback = "Ctrl+Shift+A";
+                    if fallback != loaded.screenshot_hotkey && manager.register(fallback).is_ok() {
+                        let mut updated = loaded.clone();
+                        updated.screenshot_hotkey = fallback.to_string();
+                        let state = app.state::<state::AppState>();
+                        if let Ok(mut guard) = state.settings.lock() {
+                            *guard = updated.clone();
+                        }
+                        if let Err(error) = settings::save(&state.config_path, &updated) {
+                            log::error!("save screenshot shortcut fallback failed: {error}");
+                        }
+                        shortcut_notice = Some("screenshot.hotkey_fallback");
+                    } else {
+                        shortcut_notice = Some("screenshot.hotkey_failed");
+                    }
+                }
+            }
+
+            if let Some(code) = shortcut_notice {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // The main window is shown shortly after setup; wait for the
+                    // frontend listeners before surfacing the notice.
+                    std::thread::sleep(Duration::from_millis(1500));
+                    let _ = handle.emit("screenshot-error", code.to_string());
+                });
             }
 
             tray::setup(app.handle())?;
@@ -258,6 +309,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             commands::list_items,
+            commands::get_item,
             commands::toggle_favorite,
             commands::toggle_pin,
             commands::delete_item,
@@ -277,8 +329,18 @@ pub fn run() {
             commands::update_settings,
             commands::toggle_monitoring,
             commands::hide_main,
+            commands::accessibility_status,
+            commands::open_accessibility_settings,
+            commands::open_logs_dir,
             commands::check_update,
-            commands::install_update
+            commands::install_update,
+            screenshot::start_region_capture,
+            screenshot::screenshot_session,
+            screenshot::screenshot_ready,
+            screenshot::capture_region,
+            screenshot::cancel_region_capture,
+            hotkey_capture::begin_hotkey_capture,
+            hotkey_capture::end_hotkey_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running uClipboard");

@@ -53,10 +53,10 @@ uClipboard 是一个开源、跨平台、只做剪贴板管理的桌面应用：
 |---|---|
 | 桌面框架 | Tauri 2 |
 | 前端 | React 19 + TypeScript + Vite |
-| 样式 | Tailwind CSS + Radix 原语 |
+| 样式 | 手写 CSS（Tailwind/Radix 暂未引入） |
 | 状态 | Zustand |
 | 后端 | Rust |
-| 剪贴板读取 | clipboard-rs（轮询） |
+| 剪贴板读取 | clipboard-rs（Windows 轮询 + 变更序列；macOS/Linux 变更通知） |
 | 存储 | rusqlite（bundled SQLite）+ appData 图片文件 |
 | 粘贴模拟 | Windows SendInput；macOS/Linux enigo |
 | 官方插件 | global-shortcut、autostart、single-instance、updater、log |
@@ -114,8 +114,7 @@ CREATE TABLE items (
   pinned      INTEGER NOT NULL DEFAULT 0,
   copy_count  INTEGER NOT NULL DEFAULT 1,
   created_at  INTEGER NOT NULL,   -- unix ms
-  updated_at  INTEGER NOT NULL,   -- 最后使用/最后复制时间
-  deleted_at  INTEGER             -- 软删除，预留同步
+  updated_at  INTEGER NOT NULL    -- 最后使用/最后复制时间
 );
 CREATE INDEX idx_items_order ON items(pinned DESC, updated_at DESC);
 CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
@@ -205,9 +204,9 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 └──────────────────────────────────────────────┘
 ```
 
-- 头部：左上角仅「剪贴板」文字、搜索框（唤起时自动聚焦）、暂停状态标识、设置/更多/关闭按钮
+- 头部：左上角仅「剪贴板」文字、搜索框（唤起时自动聚焦）、主题切换与最小化；设置入口在右侧按钮栏
 - 分类行：全部/文本/图像/文件/收藏（仅收藏显示数量），左右方向键切换
-- 列表：虚拟滚动；前 9 条右侧显示序号；选中项蓝色描边；悬停显示粘贴/收藏/删除图标
+- 列表：当前为带 `React.memo` 的全量渲染（虚拟滚动待长历史优化）；前 9 条右侧显示序号；选中项蓝色描边；悬停/聚焦显示复制/收藏/删除图标
 - 条目底部左侧为相对时间，右侧为字符数/图片尺寸/文件数量
 - 长文本可展开/收起；点击图片打开大图弹窗；`Space` 打开全文/大图预览
 - 右键菜单：粘贴、复制、收藏/取消收藏、置顶/取消置顶、删除
@@ -254,7 +253,7 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 | `/` 或字母（列表聚焦时） | 聚焦搜索并输入 |
 | `Esc` | 关闭浮层/预览 → 清空搜索 → 隐藏窗口 |
 
-搜索框聚焦时所有按键正常输入。单击切换高亮/多选，双击粘贴；点击右栏按钮将高亮条目加入临时中转，浮窗内可复制全部、粘贴全部、收藏全部。
+搜索框聚焦时所有按键正常输入。单击切换高亮/多选，双击粘贴；点击右栏按钮将高亮条目加入临时中转，浮窗内可复制全部、收藏全部，双击单条粘贴。
 
 ### 7.4 设置页
 
@@ -296,18 +295,19 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 
 ## 10. 错误处理与降级
 
+- 用户可见失败返回稳定错误码，由前端按当前语言翻译；底层 IO/SQLite 详情只写日志
 - 剪贴板读取失败：记录日志，下个周期重试，界面底部显示监控异常提示
 - 粘贴模拟失败（权限/Wayland）：降级仅复制 + toast 提示
 - 数据库写入失败：toast 提示并记录日志，应用保持运行
 - 图片损坏或文件已不存在：显示占位状态，仍可复制原始路径
 - 更新检查失败：设置页显示失败原因，不打扰主流程
-- 日志：tauri-plugin-log 写入 `appData/logs`，按大小轮转
+- 日志：tauri-plugin-log 写入应用日志目录并轮转；设置页「关于」提供打开日志目录入口
 
 ## 11. 测试策略
 
 - Rust 单测：存储 CRUD、去重与使用即置顶、超限/超期清理、忽略应用匹配、设置读写与迁移
 - Rust 集成：剪贴板源抽象为 trait，用 mock 验证轮询、抑制标记、隐私格式过滤
-- 前端：Vitest + Testing Library 覆盖键盘交互、搜索过滤、主题切换、i18n 键完整性
+- 前端：Vitest + Testing Library 覆盖 i18n 键完整性、错误码翻译、相对时间复数、store 行为、列表 ARIA/缩略图/按需加载；键盘交互用例待补
 - 手动冒烟（三平台）：文本/图片/文件采集、重复复制置顶、粘贴到记事本/浏览器、快捷键唤起、托盘、自启、Wayland 降级、macOS 授权、更新检查
 - UI 验证：M0 原型对照截图确认；实现后在真机实际粘贴验证
 - 自动化端到端（tauri-driver）v1 不做，避免跨平台稳定性问题
@@ -315,9 +315,8 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 ## 12. CI/CD 与发布
 
 - GitHub Actions：
-  - `ubuntu-latest`：前端测试 + cargo test
-  - `windows-latest`、`macos-latest`、`ubuntu-22.04`：构建
-  - 打 `v*` tag：tauri-action 创建草稿 Release
+  - 三平台：`npm run build` + `npm test` + `cargo fmt --check` + `cargo clippy` + `cargo test`
+  - 打 `v*` tag：先跑测试，再执行 tauri-action 创建草稿 Release
 - 产物：Windows NSIS/MSI、macOS dmg、Linux AppImage/deb
 - 自动更新：Tauri 签名密钥存入 GitHub Secrets；v1 不做 Windows/macOS 代码签名，README 说明 SmartScreen/Gatekeeper 提示及绕过方式
 - 许可证：Apache-2.0
@@ -342,7 +341,7 @@ CREATE INDEX idx_items_kind  ON items(kind, favorite, updated_at DESC);
 | Wayland 全局快捷键与粘贴受限 | 托盘兜底；粘贴降级仅复制；README 说明 |
 | Linux 文件剪贴板格式差异 | 真机验证；解析失败时保存文本路径 |
 | 全局快捷键冲突 | 注册失败提示并允许改绑 |
-| 大图片/长文本造成卡顿 | 大小上限、缩略图、列表虚拟滚动 |
+| 大图片/长文本造成卡顿 | 大小上限、缩略图、列表轻量 DTO + `React.memo`；虚拟滚动待做 |
 | 自动更新密钥管理 | 仅存 GitHub Secrets，README 说明签名流程 |
 | 视觉还原偏差 | M0 原型先对照确认，再进入 Tauri 实现 |
 
