@@ -13,7 +13,7 @@ mod tray;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
+use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 /// Returns the cursor position in physical screen coordinates.
@@ -45,36 +45,82 @@ fn cursor_screen_position(window: &tauri::WebviewWindow) -> Option<PhysicalPosit
     ))
 }
 
-fn center_on_cursor(window: &tauri::WebviewWindow) {
+fn monitor_under_cursor(window: &tauri::WebviewWindow) -> Option<tauri::Monitor> {
     #[cfg(target_os = "windows")]
-    let Some(cursor) = cursor_screen_position() else {
-        return;
-    };
+    let cursor = cursor_screen_position()?;
     #[cfg(not(target_os = "windows"))]
-    let Some(cursor) = cursor_screen_position(window) else {
-        return;
+    let cursor = cursor_screen_position(window)?;
+    window
+        .available_monitors()
+        .ok()?
+        .into_iter()
+        .find(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            cursor.x >= position.x as f64
+                && cursor.y >= position.y as f64
+                && cursor.x < (position.x + size.width as i32) as f64
+                && cursor.y < (position.y + size.height as i32) as f64
+        })
+}
+
+/// The base window size stays the floor on small screens, while high-resolution
+/// displays get a proportionally larger popup. Height follows the monitor work
+/// area and width keeps the 4:3 ratio of the base window, so the list layout
+/// never turns into a narrow strip on wide screens.
+fn adaptive_window_size(work_size: PhysicalSize<u32>, scale_factor: f64) -> LogicalSize<f64> {
+    const BASE_WIDTH: f64 = 880.0;
+    const BASE_HEIGHT: f64 = 660.0;
+    const MAX_WIDTH: f64 = 1200.0;
+    const MAX_HEIGHT: f64 = 900.0;
+    const MIN_WIDTH: f64 = 720.0;
+    const MIN_HEIGHT: f64 = 520.0;
+
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
     };
-    let Ok(monitors) = window.available_monitors() else {
-        return;
-    };
-    let monitor = monitors.into_iter().find(|monitor| {
-        let position = monitor.position();
-        let size = monitor.size();
-        cursor.x >= position.x as f64
-            && cursor.y >= position.y as f64
-            && cursor.x < (position.x + size.width as i32) as f64
-            && cursor.y < (position.y + size.height as i32) as f64
-    });
-    let Some(monitor) = monitor else {
-        return;
-    };
-    let Ok(size) = window.outer_size() else {
+    let work_width = work_size.width as f64 / scale;
+    let work_height = work_size.height as f64 / scale;
+    if !work_width.is_finite()
+        || !work_height.is_finite()
+        || work_width <= 0.0
+        || work_height <= 0.0
+    {
+        return LogicalSize::new(BASE_WIDTH, BASE_HEIGHT);
+    }
+
+    // Leave a small gap so the window never sits flush against the screen edges.
+    let max_width = (work_width - 32.0).max(MIN_WIDTH);
+    let max_height = (work_height - 32.0).max(MIN_HEIGHT);
+    let height = (work_height * 0.62)
+        .clamp(BASE_HEIGHT, MAX_HEIGHT)
+        .min(max_height);
+    let width = (height * BASE_WIDTH / BASE_HEIGHT)
+        .clamp(BASE_WIDTH, MAX_WIDTH)
+        .min(max_width);
+    // Re-derive the height after width clamping so the ratio stays 4:3.
+    let height = (width * BASE_HEIGHT / BASE_WIDTH)
+        .clamp(MIN_HEIGHT, MAX_HEIGHT)
+        .min(max_height);
+    LogicalSize::new(width, height)
+}
+
+fn fit_and_center_on_cursor(window: &tauri::WebviewWindow) {
+    let Some(monitor) = monitor_under_cursor(window) else {
         return;
     };
     let work = monitor.work_area();
-    let x = work.position.x + (work.size.width as i32 - size.width as i32) / 2;
-    let y = work.position.y + (work.size.height as i32 - size.height as i32) / 2;
+    let scale = monitor.scale_factor();
+    let size = adaptive_window_size(work.size, scale);
+    let physical = size.to_physical::<u32>(scale);
+    let x = work.position.x + (work.size.width as i32 - physical.width as i32) / 2;
+    let y = work.position.y + (work.size.height as i32 - physical.height as i32) / 2;
+    // Move first so the window picks up the target monitor's scale factor, then
+    // apply the logical size (Tauri converts it with the now-current scale).
     let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_size(size);
 }
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
@@ -85,7 +131,7 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
             }
         }
         let _ = window.unminimize();
-        center_on_cursor(&window);
+        fit_and_center_on_cursor(&window);
         let _ = window.show();
 
         // A plain set_focus() is frequently rejected by Windows' foreground lock when
@@ -455,4 +501,50 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running uClipboard");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adaptive_window_size;
+    use tauri::PhysicalSize;
+
+    fn assert_size(work: (u32, u32), scale: f64, expected: (f64, f64)) {
+        let size = adaptive_window_size(PhysicalSize::new(work.0, work.1), scale);
+        assert!(
+            (size.width - expected.0).abs() < 0.5 && (size.height - expected.1).abs() < 0.5,
+            "work {:?} @ {scale} gave {}x{}, expected {}x{}",
+            work,
+            size.width,
+            size.height,
+            expected.0,
+            expected.1
+        );
+    }
+
+    #[test]
+    fn keeps_the_base_size_on_1080p() {
+        assert_size((1920, 1040), 1.0, (880.0, 660.0));
+    }
+
+    #[test]
+    fn grows_on_4k_at_100_percent() {
+        assert_size((3840, 2120), 1.0, (1200.0, 900.0));
+    }
+
+    #[test]
+    fn grows_on_4k_at_150_percent() {
+        // 2560x1413 logical work area: 62% -> 876 high, 4:3 -> 1168 wide.
+        assert_size((3840, 2120), 1.5, (1168.36, 876.27));
+    }
+
+    #[test]
+    fn stays_inside_small_work_areas() {
+        assert_size((1366, 728), 1.0, (880.0, 660.0));
+        assert_size((800, 480), 1.0, (768.0, 520.0));
+    }
+
+    #[test]
+    fn falls_back_when_the_work_area_is_missing() {
+        assert_size((0, 0), 1.0, (880.0, 660.0));
+    }
 }
