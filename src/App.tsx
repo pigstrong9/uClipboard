@@ -61,6 +61,7 @@ export default function App() {
   const [previewItem, setPreviewItem] = useState<ClipItem | null>(null);
   const [monitorError, setMonitorError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLElement>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const paused = settings?.monitorPaused ?? false;
@@ -94,6 +95,7 @@ export default function App() {
         setPreviewItem(null);
         resetView();
         inputRef.current?.focus();
+        listRef.current?.scrollTo({ top: 0 });
       }),
     );
     bind(ipc.onOpenSettings(() => setSettingsOpen(true)));
@@ -436,6 +438,7 @@ export default function App() {
           selectedId={selectedId}
           selectedIds={selectedIds}
           loading={loading}
+          listRef={listRef}
           onSelect={handleSelect}
           onCopy={handleCopy}
           onPaste={handlePaste}

@@ -51,6 +51,7 @@ const baseProps = {
   selectedId: null,
   selectedIds: [],
   loading: false,
+  listRef: { current: null },
   onSelect: noop,
   onCopy: noop,
   onPaste: noop,

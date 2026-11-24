@@ -88,6 +88,159 @@ pub fn focus_window(hwnd: isize) -> bool {
     }
 }
 
+/// Force a window to the foreground even when Windows' foreground lock would reject a
+/// plain SetForegroundWindow (e.g. re-showing a window that was just hidden, where the
+/// OS still considers another process the foreground owner). Windows delivers
+/// WM_MOUSEWHEEL to the foreground window, so a visible-but-inactive window ignores the
+/// wheel until it is clicked.
+///
+/// Sharing the input queue with the foreground thread is the documented way around the
+/// lock; a synthetic ALT press remains as a fallback for threads that cannot attach.
+#[cfg(target_os = "windows")]
+pub fn activate_window(hwnd: isize) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    // Scan code for left ALT; VK-only injection is ignored by some Windows input paths.
+    const ALT_SCAN: u8 = 0x38;
+
+    // SAFETY: `hwnd` came from the runtime and is revalidated by IsWindow. The thread ids
+    // are only used to share and then release the input queue with the live foreground
+    // thread; every injection is a plain key event with no pointers involved.
+    unsafe {
+        let target = hwnd as HWND;
+        if IsWindow(target) == 0 || IsWindowVisible(target) == 0 {
+            return false;
+        }
+        if GetForegroundWindow() == target {
+            return true;
+        }
+
+        let foreground = GetForegroundWindow();
+        let foreground_thread = if foreground.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(foreground, std::ptr::null_mut())
+        };
+        let current_thread = GetCurrentThreadId();
+        let attached = foreground_thread != 0
+            && foreground_thread != current_thread
+            && AttachThreadInput(current_thread, foreground_thread, 1) != 0;
+
+        let _ = ShowWindow(target, SW_RESTORE);
+        BringWindowToTop(target);
+        SetForegroundWindow(target);
+
+        if attached {
+            AttachThreadInput(current_thread, foreground_thread, 0);
+        }
+        if GetForegroundWindow() == target {
+            return true;
+        }
+
+        // ALT down + up lifts the lock by making the activation count as user input.
+        keybd_event(VK_MENU as u8, ALT_SCAN, 0, 0);
+        SetForegroundWindow(target);
+        keybd_event(VK_MENU as u8, ALT_SCAN, KEYEVENTF_KEYUP, 0);
+
+        GetForegroundWindow() == target
+    }
+}
+
+/// Posts `WM_CANCELMODE` once the physical ALT key is released. The ALT+V hotkey ends
+/// with a lone ALT release just after the window is shown; Windows turns that into menu
+/// mode, whose modal loop swallows the wheel and arrow keys until the user clicks.
+/// Cancelling the mode immediately after the release leaves the window active and its
+/// input intact.
+#[cfg(target_os = "windows")]
+pub fn cancel_alt_menu_mode(hwnd: isize) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CANCELMODE};
+
+    std::thread::spawn(move || {
+        let target = hwnd as HWND;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while std::time::Instant::now() < deadline {
+            // SAFETY: reads the process-wide key state; the window handle is only
+            // posted to and does not outlive the app.
+            let alt_down = unsafe { GetAsyncKeyState(VK_MENU as i32) } < 0;
+            if !alt_down {
+                for _ in 0..3 {
+                    // SAFETY: posting a mode-cancel to our own window is harmless when
+                    // no mode is active and ends the menu loop when one is.
+                    unsafe {
+                        PostMessageW(target, WM_CANCELMODE, 0, 0);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+}
+
+/// Moves keyboard focus onto the WebView2 child window. A window can be foreground yet
+/// leave the focus with the thread it was shown from, in which case keyboard input and
+/// WM_MOUSEWHEEL never reach the page until the user clicks it. SetFocus only takes
+/// effect once the calling thread shares the target window's input queue.
+#[cfg(target_os = "windows")]
+pub fn focus_webview_child(main: isize) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetWindow, GetWindowThreadProcessId, GW_CHILD, GW_HWNDNEXT,
+    };
+
+    // SAFETY: `main` is revalidated by the caller and every child handle comes from
+    // GetWindow, which only returns live children of that window.
+    unsafe {
+        unsafe fn find_child(parent: HWND, needle: &str) -> HWND {
+            let mut child = GetWindow(parent, GW_CHILD);
+            while !child.is_null() {
+                let mut buffer = [0u16; 128];
+                let len = GetClassNameW(child, buffer.as_mut_ptr(), buffer.len() as i32);
+                if len > 0 {
+                    let class = String::from_utf16_lossy(&buffer[..len as usize]);
+                    if class.contains(needle) {
+                        return child;
+                    }
+                }
+                let nested = find_child(child, needle);
+                if !nested.is_null() {
+                    return nested;
+                }
+                child = GetWindow(child, GW_HWNDNEXT);
+            }
+            std::ptr::null_mut()
+        }
+
+        let target = main as HWND;
+        let child = find_child(target, "Chrome_WidgetWin_1");
+        if child.is_null() {
+            return false;
+        }
+        let gui_thread = GetWindowThreadProcessId(target, std::ptr::null_mut());
+        let current_thread = GetCurrentThreadId();
+        let attached = gui_thread != 0
+            && gui_thread != current_thread
+            && AttachThreadInput(current_thread, gui_thread, 1) != 0;
+        SetFocus(child);
+        let focused = GetFocus() == child;
+        if attached {
+            AttachThreadInput(current_thread, gui_thread, 0);
+        }
+        focused
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn process_name_for_window(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<String> {
     use std::path::Path;

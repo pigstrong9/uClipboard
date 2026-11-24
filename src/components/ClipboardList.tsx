@@ -1,5 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 
 import { baseName, plural, relativeTime } from '../lib/format';
 import { Icon } from '../lib/icons';
@@ -12,6 +13,7 @@ interface Props {
   selectedId: string | null;
   selectedIds: string[];
   loading: boolean;
+  listRef: RefObject<HTMLElement | null>;
   onSelect: (id: string) => void;
   onCopy: (id: string) => void;
   onPaste: (id: string) => void;
@@ -194,6 +196,7 @@ export function ClipboardList({
   selectedId,
   selectedIds,
   loading,
+  listRef,
   onSelect,
   onCopy,
   onPaste,
@@ -204,7 +207,6 @@ export function ClipboardList({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [contents, setContents] = useState<Record<string, string>>({});
   const [menu, setMenu] = useState<{ x: number; y: number; item: ClipSummary } | null>(null);
-  const listRef = useRef<HTMLElement>(null);
   const expandedRef = useRef(expanded);
   const contentsRef = useRef(contents);
   const { t } = useI18n();
@@ -266,7 +268,7 @@ export function ClipboardList({
 
   if (loading && items.length === 0) {
     return (
-      <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
+      <section className="list" tabIndex={0} aria-label={t('historyLabel')} ref={listRef}>
         <div className="empty">
           <div className="empty-icon">
             <Icon name="clipboard" />
@@ -279,7 +281,7 @@ export function ClipboardList({
 
   if (items.length === 0) {
     return (
-      <section className="list" tabIndex={0} aria-label={t('historyLabel')}>
+      <section className="list" tabIndex={0} aria-label={t('historyLabel')} ref={listRef}>
         <div className="empty">
           <div className="empty-icon">
             <Icon name="clipboard" />

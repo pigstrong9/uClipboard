@@ -16,8 +16,42 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
+/// Returns the cursor position in physical screen coordinates.
+///
+/// `WebviewWindow::cursor_position()` is window-relative. Feeding that value into a
+/// monitor lookup makes the "display under the cursor" flip between displays on every
+/// show when the pointer sits on a secondary monitor, so the window lands in a
+/// different place each time and wheel scrolling only works on alternating summons.
+#[cfg(target_os = "windows")]
+fn cursor_screen_position() -> Option<PhysicalPosition<f64>> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    unsafe {
+        let mut point = POINT { x: 0, y: 0 };
+        if GetCursorPos(&mut point) == 0 {
+            return None;
+        }
+        Some(PhysicalPosition::new(point.x as f64, point.y as f64))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn cursor_screen_position(window: &tauri::WebviewWindow) -> Option<PhysicalPosition<f64>> {
+    let relative = window.cursor_position().ok()?;
+    let outer = window.outer_position().ok()?;
+    Some(PhysicalPosition::new(
+        outer.x as f64 + relative.x,
+        outer.y as f64 + relative.y,
+    ))
+}
+
 fn center_on_cursor(window: &tauri::WebviewWindow) {
-    let Ok(cursor) = window.cursor_position() else {
+    #[cfg(target_os = "windows")]
+    let Some(cursor) = cursor_screen_position() else {
+        return;
+    };
+    #[cfg(not(target_os = "windows"))]
+    let Some(cursor) = cursor_screen_position(window) else {
         return;
     };
     let Ok(monitors) = window.available_monitors() else {
@@ -53,7 +87,30 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         center_on_cursor(&window);
         let _ = window.show();
+
+        // A plain set_focus() is frequently rejected by Windows' foreground lock when
+        // the window was just hidden: it stays visible but never receives focus, so
+        // WM_MOUSEWHEEL goes to the previous app until the user clicks us.
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(hwnd) = window.hwnd() {
+                if !crate::platform::activate_window(hwnd.0 as isize) {
+                    log::warn!("main window stayed inactive after show");
+                }
+                if !crate::platform::focus_webview_child(hwnd.0 as isize) {
+                    log::warn!("webview focus was not applied after show");
+                }
+                crate::platform::cancel_alt_menu_mode(hwnd.0 as isize);
+            }
+        }
+        // Activation owns the top-level window; sync the webview too, otherwise the
+        // WebView2 child can keep a stale visibility/focus state after hide/show and
+        // drop the wheel even though the window is foreground.
         let _ = window.set_focus();
+        let webview: &tauri::Webview = window.as_ref();
+        let _ = webview.show();
+        let _ = webview.set_focus();
+
         // `show` from a worker thread is queued on the main thread, so activation has to
         // be queued behind it or the app is asked to activate while still windowless.
         #[cfg(target_os = "macos")]
