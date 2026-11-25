@@ -93,6 +93,13 @@ pub fn prepare(capture: RawCapture, media_dir: &Path, settings: &Settings) -> Op
         }
         ClipKind::Text => {
             let text = capture.text?;
+            // When enabled, trim the plain text before it is validated, hashed or
+            // stored, so history never keeps a copy of the surrounding whitespace.
+            let text = if settings.trim_text {
+                text.trim().to_string()
+            } else {
+                text
+            };
             if text.chars().count() < settings.min_text_length
                 || text.len() > settings.max_text_bytes
             {
@@ -426,6 +433,44 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("<b>hello</b>"));
+    }
+
+    #[test]
+    fn trims_text_when_enabled() {
+        let settings = Settings {
+            trim_text: true,
+            ..Settings::default()
+        };
+        let prepared = prepare(
+            text_capture("  hello clipboard  ", None),
+            Path::new("."),
+            &settings,
+        )
+        .expect("text should be prepared");
+        assert_eq!(prepared.item.content, "hello clipboard");
+        assert_eq!(prepared.item.preview, "hello clipboard");
+        assert_eq!(prepared.item.size, 15);
+    }
+
+    #[test]
+    fn keeps_surrounding_whitespace_when_trim_disabled() {
+        let prepared = prepare(
+            text_capture("  hello clipboard  ", None),
+            Path::new("."),
+            &Settings::default(),
+        )
+        .expect("text should be prepared");
+        assert_eq!(prepared.item.content, "  hello clipboard  ");
+    }
+
+    #[test]
+    fn drops_text_that_becomes_too_short_after_trim() {
+        let settings = Settings {
+            trim_text: true,
+            min_text_length: 3,
+            ..Settings::default()
+        };
+        assert!(prepare(text_capture("   ab   ", None), Path::new("."), &settings).is_none());
     }
 
     #[test]

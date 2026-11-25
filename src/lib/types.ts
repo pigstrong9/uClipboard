@@ -81,6 +81,7 @@ export interface Settings {
   recordImages: boolean;
   recordFiles: boolean;
   minTextLength: number;
+  trimText: boolean;
   ignoredApps: string[];
   pastePlainText: boolean;
   autoUpdate: boolean;

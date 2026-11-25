@@ -444,6 +444,16 @@ export function SettingsView({ onClose }: Props) {
               />
             </label>
             <label className="setting-row">
+              <span>{t('trimText')}</span>
+              <input
+                type="checkbox"
+                checked={settings.trimText}
+                onChange={(event) => void commit({ trimText: event.target.checked })}
+              />
+            </label>
+            <span className="settings-note settings-note-row">{t('trimTextNote')}</span>
+
+            <label className="setting-row">
               <span>{t('monitorPaused')}</span>
               <input
                 type="checkbox"

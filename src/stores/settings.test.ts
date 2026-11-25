@@ -26,6 +26,7 @@ function settings(ignoredApps: string[] = []): Settings {
     recordImages: true,
     recordFiles: true,
     minTextLength: 2,
+    trimText: false,
     ignoredApps,
     pastePlainText: false,
     autoUpdate: true,
