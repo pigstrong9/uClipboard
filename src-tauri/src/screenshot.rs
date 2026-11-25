@@ -589,11 +589,17 @@ fn capture_shots(monitors: &[xcap::Monitor]) -> Result<Vec<MonitorShot>, String>
     Ok(shots)
 }
 
-fn slice_label(index: usize) -> String {
+/// Overlay labels include the capture round so a new screenshot can never
+/// collide with a previous window still being torn down. Window `close()` is
+/// asynchronous: the `Destroyed` event that clears the session can arrive after
+/// the user has already triggered another capture, and reusing a fixed label
+/// then makes `WebviewWindowBuilder::build()` fail with a duplicate-label
+/// error ("无法创建截图窗口" in the UI). Unique labels remove that race.
+fn slice_label(round: &str, index: usize) -> String {
     if index == 0 {
-        WINDOW.to_string()
+        format!("{WINDOW}-{round}")
     } else {
-        format!("{WINDOW}-{index}")
+        format!("{WINDOW}-{round}-{index}")
     }
 }
 
@@ -651,7 +657,7 @@ fn capture_displays(media_dir: &Path) -> Result<Vec<OverlaySlice>, String> {
             }
         };
         slices.push(OverlaySlice {
-            label: slice_label(index),
+            label: slice_label(&round, index),
             image_path,
             width,
             height,
@@ -696,7 +702,7 @@ fn capture_displays(media_dir: &Path) -> Result<Vec<OverlaySlice>, String> {
     let round = uuid::Uuid::now_v7().to_string();
     let path = write_capture(media_dir, &round, 0, canvas)?;
     Ok(vec![OverlaySlice {
-        label: slice_label(0),
+        label: slice_label(&round, 0),
         image_path: path,
         width,
         height,
@@ -823,9 +829,14 @@ mod tests {
 
     #[test]
     fn every_display_gets_its_own_overlay_label() {
-        assert_eq!(slice_label(0), WINDOW);
-        assert_eq!(slice_label(1), "screenshot-1");
-        assert_eq!(slice_label(2), "screenshot-2");
+        assert_eq!(slice_label("round-a", 0), "screenshot-round-a");
+        assert_eq!(slice_label("round-a", 1), "screenshot-round-a-1");
+        assert_eq!(slice_label("round-a", 2), "screenshot-round-a-2");
+    }
+
+    #[test]
+    fn overlay_labels_are_unique_across_rounds() {
+        assert_ne!(slice_label("round-a", 0), slice_label("round-b", 0));
     }
 
     #[test]
