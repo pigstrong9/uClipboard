@@ -1,6 +1,6 @@
 {
   "name": "uclipboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "跨平台开源剪贴板管理器，基于 Tauri 2 + React + TypeScript。",
   "private": true,
   "type": "module",
