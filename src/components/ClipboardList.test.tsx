@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +57,7 @@ const baseProps = {
   onPaste: noop,
   onFavorite: noop,
   onPin: noop,
+  onIgnoreApp: noop,
   onDelete: noop,
 };
 
@@ -90,6 +91,29 @@ describe('ClipboardList', () => {
     const image = screen.getByAltText('Clipboard image') as HTMLImageElement;
     expect(image.getAttribute('src')).toBe('asset:///app/images/a_thumb.jpg');
     expect(screen.getByText('120 × 80')).toBeTruthy();
+  });
+
+  it('offers ignoring the source app only when the item has one', async () => {
+    const user = userEvent.setup();
+    const onIgnoreApp = vi.fn();
+    const withSource = summary({ id: 's1', source_app: 'GameViewer.exe' });
+
+    render(
+      <ClipboardList
+        {...baseProps}
+        items={[withSource, summary({ id: 's2' })]}
+        onIgnoreApp={onIgnoreApp}
+      />,
+    );
+
+    const rows = screen.getAllByRole('option');
+    fireEvent.contextMenu(rows[0], { clientX: 10, clientY: 10 });
+    expect(screen.getByRole('button', { name: 'Ignore GameViewer.exe' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Ignore GameViewer.exe' }));
+    expect(onIgnoreApp).toHaveBeenCalledWith('GameViewer.exe');
+
+    fireEvent.contextMenu(rows[1], { clientX: 10, clientY: 10 });
+    expect(screen.queryByText(/^Ignore /)).toBeNull();
   });
 
   it('fetches the full text only when a truncated row is expanded', async () => {

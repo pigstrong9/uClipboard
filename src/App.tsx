@@ -51,6 +51,7 @@ export default function App() {
   const answer = useUi((state) => state.answer);
   const settings = useSettings((state) => state.settings);
   const initSettings = useSettings((state) => state.init);
+  const ignoreApp = useSettings((state) => state.ignoreApp);
   const settingsError = useSettings((state) => state.error);
   const clearSettingsError = useSettings((state) => state.clearError);
   const { theme, toggleTheme } = useTheme();
@@ -224,6 +225,15 @@ export default function App() {
       void run(() => togglePin(id));
     },
     [run, togglePin],
+  );
+  const handleIgnoreApp = useCallback(
+    (app: string) => {
+      void run(async () => {
+        const added = await ignoreApp(app);
+        toast(t(added ? 'appIgnored' : 'appAlreadyIgnored', { app }));
+      });
+    },
+    [run, ignoreApp, toast, t],
   );
   const handleDelete = useCallback(
     (id: string) => {
@@ -444,6 +454,7 @@ export default function App() {
           onPaste={handlePaste}
           onFavorite={handleFavorite}
           onPin={handlePin}
+          onIgnoreApp={handleIgnoreApp}
           onDelete={handleDelete}
         />
         <SideRail

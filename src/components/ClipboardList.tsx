@@ -19,6 +19,7 @@ interface Props {
   onPaste: (id: string) => void;
   onFavorite: (id: string) => void;
   onPin: (id: string) => void;
+  onIgnoreApp: (app: string) => void;
   onDelete: (id: string) => void;
 }
 
@@ -202,6 +203,7 @@ export function ClipboardList({
   onPaste,
   onFavorite,
   onPin,
+  onIgnoreApp,
   onDelete,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -367,6 +369,21 @@ export function ClipboardList({
           >
             {menu.item.pinned ? t('unpin') : t('pin')}
           </button>
+          {menu.item.source_app && (
+            <>
+              <hr />
+              <button
+                type="button"
+                onClick={() => {
+                  const app = menu.item.source_app;
+                  setMenu(null);
+                  if (app) onIgnoreApp(app);
+                }}
+              >
+                {t('ignoreApp', { app: menu.item.source_app })}
+              </button>
+            </>
+          )}
           <hr />
           <button
             type="button"
