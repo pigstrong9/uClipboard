@@ -78,6 +78,10 @@ impl ClipboardSource for SystemClipboard {
 
         if let Ok(text) = ctx.get_text() {
             if !text.trim().is_empty() {
+                // Some clipboard bridges write UTF-8 bytes into CF_UNICODETEXT,
+                // which clipboard-rs decodes as UTF-16LE into CJK-looking noise.
+                // Recover the original payload before it reaches history/hash.
+                let text = crate::clipboard::text::repair_mojibake(&text).unwrap_or(text);
                 let html = ctx.get_html().ok().filter(|h| !h.trim().is_empty());
                 return Ok(Some(RawCapture {
                     kind: ClipKind::Text,
