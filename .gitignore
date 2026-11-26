@@ -19,3 +19,6 @@ Thumbs.db
 
 .trash-local/
 .workbuddy/
+
+# Local agent collaboration notes — never commit or push
+agent.md
