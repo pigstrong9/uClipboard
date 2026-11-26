@@ -613,17 +613,66 @@ pub struct UpdateInfo {
     pub date: Option<String>,
 }
 
+/// Compares two dotted numeric versions (with optional leading `v`), e.g. `v0.1.2` > `0.1.1`.
+/// Returns true only when `latest` is strictly newer than `current`.
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    fn parse(version: &str) -> Option<Vec<u64>> {
+        let trimmed = version
+            .trim()
+            .trim_start_matches('v')
+            .trim_start_matches('V');
+        let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
+        let parts: Option<Vec<u64>> = core
+            .split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect();
+        parts.filter(|parts| !parts.is_empty())
+    }
+
+    let (Some(latest), Some(current)) = (parse(latest), parse(current)) else {
+        return false;
+    };
+    for index in 0..latest.len().max(current.len()) {
+        let left = latest.get(index).copied().unwrap_or(0);
+        let right = current.get(index).copied().unwrap_or(0);
+        if left != right {
+            return left > right;
+        }
+    }
+    false
+}
+
 #[tauri::command]
 pub async fn check_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    use tauri_plugin_updater::UpdaterExt;
+    #[derive(serde::Deserialize)]
+    struct GithubRelease {
+        tag_name: String,
+        body: Option<String>,
+        published_at: Option<String>,
+    }
 
-    let updater = app.updater().map_err(|error| error.to_string())?;
-    let update = updater.check().await.map_err(|error| error.to_string())?;
-    Ok(update.map(|update| UpdateInfo {
-        version: update.version.clone(),
-        current_version: update.current_version.clone(),
-        body: update.body.clone(),
-        date: update.date.map(|date| date.to_string()),
+    let client = reqwest::Client::builder()
+        .user_agent("uClipboard")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get("https://api.github.com/repos/pigstrong9/uClipboard/releases/latest")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+    let release: GithubRelease = response.json().await.map_err(|error| error.to_string())?;
+
+    let current_version = app.package_info().version.to_string();
+    if !is_newer_version(&release.tag_name, &current_version) {
+        return Ok(None);
+    }
+    Ok(Some(UpdateInfo {
+        version: release.tag_name,
+        current_version,
+        body: release.body,
+        date: release.published_at,
     }))
 }
 

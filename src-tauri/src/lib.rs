@@ -229,11 +229,8 @@ fn on_shortcut(
 }
 
 async fn check_for_update(app: tauri::AppHandle) {
-    use tauri_plugin_updater::UpdaterExt;
-    if let Ok(updater) = app.updater() {
-        if let Ok(Some(update)) = updater.check().await {
-            let _ = app.emit("update-available", update.version);
-        }
+    if let Ok(Some(info)) = crate::commands::check_update(app.clone()).await {
+        let _ = app.emit("update-available", info.version);
     }
 }
 
@@ -272,7 +269,6 @@ pub fn run() {
                 .arg("--autostart")
                 .build(),
         )
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             // Menu bar app: no Dock icon, mirroring skipTaskbar on Windows.

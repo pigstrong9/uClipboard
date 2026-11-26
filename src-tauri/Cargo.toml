@@ -26,9 +26,9 @@ xcap = "0.9"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-log = "2"
 log = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 enigo = "0.6"
