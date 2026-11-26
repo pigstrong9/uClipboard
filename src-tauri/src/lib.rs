@@ -490,7 +490,7 @@ pub fn run() {
             commands::open_screen_recording_settings,
             commands::open_logs_dir,
             commands::check_update,
-            commands::install_update,
+            commands::open_release_page,
             screenshot::start_region_capture,
             screenshot::screenshot_session,
             screenshot::screenshot_ready,

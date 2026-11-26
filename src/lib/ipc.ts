@@ -150,8 +150,8 @@ export function checkUpdate() {
   return invoke<UpdateInfo | null>('check_update');
 }
 
-export function installUpdate() {
-  return invoke<void>('install_update');
+export function openReleasePage() {
+  return invoke<void>('open_release_page');
 }
 
 export function onClipboardChanged(callback: () => void): Promise<UnlistenFn> {

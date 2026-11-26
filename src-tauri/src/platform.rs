@@ -917,6 +917,28 @@ pub fn open_path(path: &std::path::Path) -> bool {
     }
 }
 
+/// Opens a URL in the user's default browser.
+pub fn open_url(url: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .is_ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn().is_ok()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .is_ok()
+    }
+}
+
 /// tao only calls `activateIgnoringOtherApps:`, which macOS 14+ ignores, so a panel that
 /// is shown from a background hotkey never becomes key and keystrokes keep going to the
 /// previous app. Route activation through the modern API. Must run on the main thread.

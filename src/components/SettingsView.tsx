@@ -51,7 +51,6 @@ export function SettingsView({ onClose }: Props) {
   const [ignored, setIgnored] = useState('');
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
-  const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [accessibility, setAccessibility] = useState<boolean | null>(null);
   const [screenPermission, setScreenPermission] = useState<boolean | null>(null);
@@ -154,13 +153,11 @@ export function SettingsView({ onClose }: Props) {
     }
   };
 
-  const installUpdate = async () => {
-    setInstalling(true);
+  const openReleasePage = async () => {
     try {
-      await ipc.installUpdate();
+      await ipc.openReleasePage();
     } catch (error) {
-      toast(t('updateFailed', { error: errorText(t, error) }));
-      setInstalling(false);
+      toast(t('openReleaseFailed', { error: errorText(t, error) }));
     }
   };
 
@@ -537,7 +534,7 @@ export function SettingsView({ onClose }: Props) {
                 type="button"
                 className="settings-button"
                 onClick={() => void checkUpdate()}
-                disabled={checking || installing}
+                disabled={checking}
               >
                 {checking ? t('checking') : t('checkUpdate')}
               </button>
@@ -545,10 +542,9 @@ export function SettingsView({ onClose }: Props) {
                 <button
                   type="button"
                   className="settings-button"
-                  onClick={() => void installUpdate()}
-                  disabled={installing}
+                  onClick={() => void openReleasePage()}
                 >
-                  {installing ? t('installing') : t('installUpdate')}
+                  {t('openReleasePage')}
                 </button>
               )}
             </div>

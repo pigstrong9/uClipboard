@@ -627,26 +627,16 @@ pub async fn check_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, S
     }))
 }
 
+/// Opens the latest release page in the default browser so the user can pick
+/// the right package (dmg on macOS, exe on Windows) and install it themselves.
 #[tauri::command]
-pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let updater = app.updater().map_err(|error| error.to_string())?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "update.not_available".to_string())?;
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
-        .await
-        .map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "windows"))]
-    {
-        app.restart()
+pub fn open_release_page() -> Result<(), String> {
+    const URL: &str = "https://github.com/pigstrong9/uClipboard/releases/latest";
+    if crate::platform::open_url(URL) {
+        Ok(())
+    } else {
+        Err("update.open_failed".to_string())
     }
-    #[cfg(target_os = "windows")]
-    Ok(())
 }
 
 #[tauri::command]
