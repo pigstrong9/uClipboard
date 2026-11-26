@@ -67,17 +67,13 @@ jobs:
         id: changelog
         shell: bash
         run: |
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n 1)
           {
             echo 'body<<CHANGELOG_EOF'
-            echo '## 更新内容'
-            echo ''
-            if [ -n "$PREV_TAG" ]; then
-              git log --pretty=format:'- %s' "${PREV_TAG}..${GITHUB_REF_NAME}"
-            else
-              git log --pretty=format:'- %s'
-            fi
-            echo ''
+            awk -v ver="## ${GITHUB_REF_NAME} " '
+              index($0, ver) == 1 { found=1 }
+              found && /^## v/ && index($0, ver) != 1 { exit }
+              found { print }
+            ' CHANGELOG.md
             echo 'CHANGELOG_EOF'
           } >> "$GITHUB_OUTPUT"
       - run: npm ci
