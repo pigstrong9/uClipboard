@@ -51,6 +51,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -61,6 +63,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+      - name: Generate changelog
+        id: changelog
+        shell: bash
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n 1)
+          {
+            echo 'body<<CHANGELOG_EOF'
+            echo '## 更新内容'
+            echo ''
+            if [ -n "$PREV_TAG" ]; then
+              git log --pretty=format:'- %s' "${PREV_TAG}..${GITHUB_REF_NAME}"
+            else
+              git log --pretty=format:'- %s'
+            fi
+            echo ''
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
       - run: npm ci
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -70,7 +89,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: uClipboard ${{ github.ref_name }}
-          releaseBody: See the assets below for downloads.
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: --config src-tauri/tauri.updater.conf.json --bundles ${{ matrix.bundles }} --target ${{ matrix.target }}
